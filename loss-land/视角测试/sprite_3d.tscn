@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://243mh6v8vv1p"]
+
+[ext_resource type="Texture2D" uid="uid://oya8wpn6jmc8" path="res://视角测试/icon.svg" id="1_7s03t"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_x3a0m"]
+
+[node name="Sprite3D" type="Sprite3D" unique_id=1812209857]
+
+[node name="Player" type="CharacterBody3D" parent="." unique_id=699456471]
+
+[node name="Sprite3D" type="Sprite3D" parent="Player" unique_id=1969406978]
+billboard = 1
+texture = ExtResource("1_7s03t")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=56979227]
+shape = SubResource("CapsuleShape3D_x3a0m")

@@ -1,0 +1,44 @@
+[gd_scene format=3 uid="uid://b81pl0pvlckvh"]
+
+[ext_resource type="Script" uid="uid://dr0narwtdmpxb" path="res://视角测试/camera_3d.gd" id="1_ig7tw"]
+[ext_resource type="PackedScene" uid="uid://243mh6v8vv1p" path="res://视角测试/sprite_3d.tscn" id="2_0xm2m"]
+[ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="3_bg2k3"]
+
+[sub_resource type="Environment" id="Environment_0xm2m"]
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 0.5
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_h2yge"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_1bvp3"]
+
+[node name="main" type="Node3D" unique_id=428823691]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1418972575]
+environment = SubResource("Environment_0xm2m")
+
+[node name="Ground" type="StaticBody3D" parent="." unique_id=2041628305]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=1391875933]
+transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 6, 0, 0, 0)
+mesh = SubResource("PlaneMesh_h2yge")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=2019792472]
+transform = Transform3D(2, 0, 0, 0, -0.03878498, 0, 0, 0, 2, 0, 0, 0)
+shape = SubResource("BoxShape3D_1bvp3")
+
+[node name="Sprite3D" parent="." unique_id=1812209857 instance=ExtResource("2_0xm2m")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.50117826, 0)
+visible = false
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1384411646 node_paths=PackedStringArray("target")]
+transform = Transform3D(-1, -8.742278e-08, 0, -6.765126e-08, 0.7738402, 0.6333809, -5.5371917e-08, 0.6333809, -0.7738402, 0, 5, -5)
+current = true
+script = ExtResource("1_ig7tw")
+target = NodePath("../Sprite3D")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1148351242]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 3.268571, 0)
+light_energy = 16.0
+
+[node name="player" parent="." unique_id=23778506 instance=ExtResource("3_bg2k3")]
