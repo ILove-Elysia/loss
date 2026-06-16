@@ -2,6 +2,7 @@
 
 [ext_resource type="Texture2D" uid="uid://b2jy0gdl7lb2v" path="res://art/player/char_blue.png" id="1_7j80i"]
 [ext_resource type="Script" uid="uid://dwslhqdnidaik" path="res://script/player/physics.gd" id="1_7omxl"]
+[ext_resource type="Script" uid="uid://btim5rl33bcbf" path="res://script/player/camera_3d.gd" id="2_3c7ea"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_onrkg"]
 height = 1.0
@@ -276,8 +277,10 @@ top_level = true
 [node name="Camera_Target" type="Node3D" parent="Camera_controller" unique_id=2133385941]
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 2, 2)
 
-[node name="Camera3D" type="Camera3D" parent="Camera_controller/Camera_Target" unique_id=760426564]
+[node name="Camera3D" type="Camera3D" parent="Camera_controller/Camera_Target" unique_id=760426564 node_paths=PackedStringArray("target")]
 current = true
+script = ExtResource("2_3c7ea")
+target = NodePath("../../../Physics")
 
 [node name="Visual" type="Node3D" parent="." unique_id=1533953368]
 transform = Transform3D(1, 4.129106e-10, 0, 4.28372e-10, 1, 1.8626451e-09, -9.313226e-10, 0, 1, 0, 0, 0)

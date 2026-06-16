@@ -67,9 +67,9 @@ func _physics_process(delta):
 		
 		# 按左键 → 朝左 / 按右键 → 朝右
 		if Input.is_action_pressed("move_left"):
-			spr.flip_h = false
-		elif Input.is_action_pressed("move_right"):
 			spr.flip_h = true
+		elif Input.is_action_pressed("move_right"):
+			spr.flip_h = false
 	else:
 		# 松开按键 → 立刻待机
 		if spr.animation != "idle":
