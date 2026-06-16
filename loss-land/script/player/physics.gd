@@ -8,6 +8,9 @@ extends CharacterBody3D
 @onready var spr: AnimatedSprite3D = get_parent().get_node("Visual/BaseBody")
 @onready var visual_node: Node3D = get_parent().get_node("Visual")
 
+# 记录左右朝向（true=朝左，false=朝右）
+var facing_left: bool = true
+
 func _ready():
 	# 设置向上方向（用于地板检测）
 	up_direction = Vector3.UP
@@ -31,14 +34,17 @@ func _physics_process(delta):
 		right = right.normalized()
 		
 		# WASD 移动输入（相对于相机方向）
+		# 只有左右键才改变朝向
 		if Input.is_action_pressed("move_forward"):
 			dir += forward
 		if Input.is_action_pressed("move_back"):
 			dir -= forward
 		if Input.is_action_pressed("move_right"):
 			dir += right
+			facing_left = false  # 向右移动，朝右
 		if Input.is_action_pressed("move_left"):
 			dir -= right
+			facing_left = true   # 向左移动，朝左
 	
 	# ===== 应用重力 =====
 	if not is_on_floor():
@@ -57,23 +63,24 @@ func _physics_process(delta):
 	# 执行移动（关键！）
 	move_and_slide()
 	
-	# ===== 同步视觉节点位置 =====
+	# ===== 同步视觉节点位置和朝向 =====
 	visual_node.global_position = global_position
 	
-	# ===== 动画控制 + 朝向翻转 =====
+	# 让角色始终朝向摄像机
+	if cam:
+		var look_dir = cam.global_position - global_position
+		look_dir.y = 0
+		if look_dir.length() > 0.001:
+			look_dir = look_dir.normalized()
+			visual_node.look_at(global_position + look_dir, Vector3.UP)
+	
+	# ===== 动画控制 =====
 	if dir.length() > 0:
 		if spr.animation != "walk":
 			spr.play("walk")
 		
-		# 只在左右移动时翻转，前后移动不改变朝向
-		# flip_h = true 表示朝左，flip_h = false 表示朝右
-		if abs(dir.x) > 0.1:
-			if dir.x > 0:
-				# 向右移动，朝右
-				spr.flip_h = true
-			else:
-				# 向左移动，朝左
-				spr.flip_h = false
+		# 根据记录的朝向翻转动画
+		spr.flip_h = facing_left
 	else:
 		if spr.animation != "idle":
 			spr.play("idle")

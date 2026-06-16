@@ -20,7 +20,7 @@ collision_layer = 2
 collision_mask = 3
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=376418593]
-transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 6, 0, 0, 0)
+transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 6, 0.006177902, 1.1920929e-07, 0.0011007786)
 mesh = SubResource("PlaneMesh_j3pou")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1507836157]
