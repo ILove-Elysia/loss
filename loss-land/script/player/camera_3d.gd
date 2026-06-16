@@ -15,7 +15,7 @@ const rotate_step: float = deg_to_rad(45)
 # FOV缩放参数
 @export var min_fov: float = 30.0
 @export var max_fov: float = 100.0
-@export var zoom_speed: float = 50.0
+@export var zoom_speed: float = 2.0
 
 func _ready():
 	projection = PROJECTION_PERSPECTIVE
@@ -23,6 +23,14 @@ func _ready():
 	# 自动赋值目标，不用手动拖拽（适配你的节点树）
 	if not target:
 		target = get_parent().get_parent().get_parent()
+
+func _input(event: InputEvent) -> void:
+	# 滚轮缩放 FOV
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			fov = clamp(fov - zoom_speed, min_fov, max_fov)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			fov = clamp(fov + zoom_speed, min_fov, max_fov)
 
 func _process(delta: float) -> void:
 	if not target:
@@ -33,11 +41,6 @@ func _process(delta: float) -> void:
 		yaw_rad -= rotate_step
 	if Input.is_action_just_pressed("rotate_right"):
 		yaw_rad += rotate_step
-
-	# ========== 修复滚轮拉近拉远逻辑 ==========
-	var scroll = Input.get_axis("zoom_out", "zoom_in")
-	fov -= scroll * zoom_speed * delta
-	fov = clamp(fov, min_fov, max_fov)
 
 	# 计算旋转后的偏移（绕世界Y轴旋转，环绕玩家）
 	var rotated_offset = base_offset.rotated(Vector3.UP, yaw_rad)
