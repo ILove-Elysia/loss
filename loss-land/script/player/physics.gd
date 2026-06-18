@@ -41,7 +41,7 @@ func _physics_process(delta):
 			dir -= forward
 		if Input.is_action_pressed("move_right"):
 			dir += right
-			facing_left = false  # 向右移动，朝右
+			facing_left = false  # 向右移动，朝 右
 		if Input.is_action_pressed("move_left"):
 			dir -= right
 			facing_left = true   # 向左移动，朝左

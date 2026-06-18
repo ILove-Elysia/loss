@@ -10,6 +10,7 @@ size = Vector3(10, 1, 10)
 [sub_resource type="Environment" id="Environment_5jxjy"]
 ambient_light_source = 2
 ambient_light_color = Color(0.8289096, 0.82890964, 0.82890975, 1)
+ambient_light_energy = 9.0
 
 [sub_resource type="Compositor" id="Compositor_j3pou"]
 
