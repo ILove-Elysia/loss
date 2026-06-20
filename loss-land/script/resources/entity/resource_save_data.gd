@@ -36,22 +36,22 @@ extends Node
 # }
 # ----------------------------------------
 func save_all(entities: Array[ResourceEntity]) -> Dictionary:
-    # 创建保存数据数组
-    var save_data: Array[Dictionary] = []
-    
-    # 遍历所有实体
-    for entity in entities:
-        # 检查实体是否有效
-        # is_instance_valid 检查对象是否还存在
-        if is_instance_valid(entity):
-            # 获取每个实体的保存数据
-            save_data.append(entity.get_save_data())
-    
-    # 返回完整的存档结构
-    return {
-        "version": 1,
-        "resources": save_data
-    }
+	# 创建保存数据数组
+	var save_data: Array[Dictionary] = []
+	
+	# 遍历所有实体
+	for entity in entities:
+		# 检查实体是否有效
+		# is_instance_valid 检查对象是否还存在
+		if is_instance_valid(entity):
+			# 获取每个实体的保存数据
+			save_data.append(entity.get_save_data())
+	
+	# 返回完整的存档结构
+	return {
+		"version": 1,
+		"resources": save_data
+	}
 
 # ----------------------------------------
 # 加载所有资源函数
@@ -62,15 +62,15 @@ func save_all(entities: Array[ResourceEntity]) -> Dictionary:
 #   manager - 资源管理器引用
 # ----------------------------------------
 func load_all(data: Dictionary, manager: ResourceManager) -> void:
-    # 获取存档版本
-    var version = data.get("version", 1)
-    
-    # 获取资源数据数组
-    var resources_data = data.get("resources", [])
-    
-    # 遍历并加载每个资源
-    for resource_data in resources_data:
-        _load_single_resource(resource_data, manager)
+	# 获取存档版本
+	var version = data.get("version", 1)
+	
+	# 获取资源数据数组
+	var resources_data = data.get("resources", [])
+	
+	# 遍历并加载每个资源
+	for resource_data in resources_data:
+		_load_single_resource(resource_data, manager)
 
 # ============================================
 # 私有方法
@@ -81,23 +81,23 @@ func load_all(data: Dictionary, manager: ResourceManager) -> void:
 # 从数据恢复一个资源实体
 # ----------------------------------------
 func _load_single_resource(data: Dictionary, manager: ResourceManager) -> void:
-    # 获取资源ID
-    var resource_id = StringName(data.get("resource_id", ""))
-    
-    # 获取位置数据
-    var pos_data = data.get("position", {})
-    var position = Vector3(
-        pos_data.get("x", 0.0),
-        pos_data.get("y", 0.0),
-        pos_data.get("z", 0.0)
-    )
-    
-    # 获取状态
-    var state = data.get("state", ResourceState.State.GROWING)
-    
-    # 通过管理器生成资源
-    var entity = manager.spawn_resource(resource_id, position, state)
-    
-    # 如果生成成功，加载详细数据
-    if entity:
-        entity.load_save_data(data)
+	# 获取资源ID
+	var resource_id = StringName(data.get("resource_id", ""))
+	
+	# 获取位置数据
+	var pos_data = data.get("position", {})
+	var position = Vector3(
+		pos_data.get("x", 0.0),
+		pos_data.get("y", 0.0),
+		pos_data.get("z", 0.0)
+	)
+	
+	# 获取状态
+	var state = data.get("state", ResourceState.State.GROWING)
+	
+	# 通过管理器生成资源
+	var entity = manager.spawn_resource(resource_id, position, state)
+	
+	# 如果生成成功，加载详细数据
+	if entity:
+		entity.load_save_data(data)

@@ -29,13 +29,13 @@ extends Resource
 # 你可以在这里添加更多类型来扩展游戏
 # ----------------------------------------
 enum ResourceType {
-    GRASS,      # 草
-    TWIG,       # 树枝
-    TREE,       # 树
-    STONE,      # 石头
-    BUSH,       # 灌木
-    FLOWER,     # 花
-    CUSTOM      # 自定义（用于特殊资源）
+	GRASS,      # 草
+	TWIG,       # 树枝
+	TREE,       # 树
+	STONE,      # 石头
+	BUSH,       # 灌木
+	FLOWER,     # 花
+	CUSTOM      # 自定义（用于特殊资源）
 }
 
 # ----------------------------------------
@@ -44,16 +44,17 @@ enum ResourceType {
 # NONE 表示不需要任何工具，空手就能采集
 # ----------------------------------------
 enum HarvestTool {
-    NONE,       # 无需工具（如草、树枝）
-    AXE,        # 斧头（如树）
-    PICKAXE,    # 镐（如石头）
-    SHOVEL,     # 铲子（用于挖掘）
-    KNIFE       # 小刀
+	NONE,       # 无需工具（如草、树枝）
+	AXE,        # 斧头（如树）
+	PICKAXE,    # 镐（如石头）
+	SHOVEL,     # 铲子（用于挖掘）
+	KNIFE       # 小刀
 }
 
 # ============================================
 # 基本信息配置
 # ============================================
+@export_group("基本信息", "")
 
 # 资源的唯一标识符，用于代码中查找资源
 # 例如：&"grass"、&"tree"、&"stone"
@@ -69,6 +70,7 @@ enum HarvestTool {
 # ============================================
 # 视觉配置
 # ============================================
+@export_group("视觉", "")
 
 # 生长状态的贴图（完好状态的图片）
 # 在编辑器中拖拽图片文件到此处
@@ -91,10 +93,15 @@ enum HarvestTool {
 # ============================================
 # 生成配置
 # ============================================
+@export_group("生成", "")
 
 # 同类资源之间的最小距离
 # 防止资源生成得太密集，看起来更自然
 @export var min_distance: float = 2.0
+
+# 初始生成数量
+# 游戏开始时在地图上生成的资源数量
+@export var initial_count: int = 10
 
 # 每个区块的最大生成数量
 # 控制地图上该资源的密度
@@ -112,30 +119,32 @@ enum HarvestTool {
 # ============================================
 # 采集配置
 # ============================================
+@export_group("采集", "")
+
+# 是否可以采集
+@export var can_harvest: bool = true
 
 # 采集所需时间（秒）
 # 玩家需要站在原地多久才能完成采集
 @export var harvest_time: float = 1.0
 
 # 采集所需的工具类型
-# NONE 表示不需要工具
-# AXE/PICKAXE 等表示需要对应工具才能采集
+# NONE=无需工具, AXE=斧头, PICKAXE=镐, SHOVEL=铲子, KNIFE=小刀
 @export var required_tool: HarvestTool = HarvestTool.NONE
 
 # 采集后掉落的物品ID
 # 这个ID需要与你的物品系统中的物品ID对应
 @export var drop_item_id: StringName
 
-# 掉落数量最小值
+# 掉落数量范围
+# 实际掉落数量会在范围内随机
 @export var drop_count_min: int = 1
-
-# 掉落数量最大值
-# 实际掉落数量会在 min 和 max 之间随机
 @export var drop_count_max: int = 1
 
 # ============================================
 # 挖掘配置（铲子功能）
 # ============================================
+@export_group("挖掘", "")
 
 # 是否可以被铲子挖掘
 # 如果为 true，用铲子交互会：
@@ -147,12 +156,14 @@ enum HarvestTool {
 # 玩家可以用这个物品来种植新的草
 @export var dig_drop_item_id: StringName
 
-# 挖掘掉落数量
-@export var dig_drop_count: int = 1
+# 挖掘掉落数量范围
+@export var dig_drop_count_min: int = 1
+@export var dig_drop_count_max: int = 1
 
 # ============================================
 # 再生配置
 # ============================================
+@export_group("再生", "")
 
 # 是否可以再生
 # 石头、树等不可再生资源设为 false
@@ -171,10 +182,11 @@ enum HarvestTool {
 # ============================================
 # 种植配置
 # ============================================
+@export_group("种植", "")
 
 # 是否可以被种植
 # 如果为 true，玩家可以把挖掘获得的草丛物品放到地上
-@export var can_be_planted: bool = false
+@export var can_plant: bool = false
 
 # 用于种植的物品ID
 # 玩家背包中有这个物品时，可以在地上种植
@@ -213,4 +225,4 @@ enum HarvestTool {
 #   可能返回 1, 2, 或 3
 # ----------------------------------------
 func get_drop_count() -> int:
-    return randi_range(drop_count_min, drop_count_max)
+	return randi_range(drop_count_min, drop_count_max)

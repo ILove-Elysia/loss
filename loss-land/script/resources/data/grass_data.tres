@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ResourceData" format=3 uid="uid://ct0bl3ogrinot"]
+
+[ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_idiyn"]
+
+[resource]
+script = ExtResource("1_idiyn")
+resource_id = "grass"
+display_name = "草"
+growing_animation = "growing"
+transition_duration = 0.5
+drop_item_id = "grass_item"
+drop_count_max = 2
+can_dig = true
+dig_drop_item_id = "grass_roots"
+metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

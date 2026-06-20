@@ -46,7 +46,7 @@ var _data_cache: Dictionary = {}
 # _init() 是 Godot 的构造函数
 # 当创建这个类的实例时自动调用
 func _init() -> void:
-    _build_cache()
+	_build_cache()
 
 # ============================================
 # 公共方法
@@ -63,13 +63,13 @@ func _init() -> void:
 #   var grass_config = registry.get_resource_data(&"grass")
 # ----------------------------------------
 func get_resource_data(resource_id: StringName) -> ResourceData:
-    # 如果缓存为空，构建缓存
-    if _data_cache.is_empty():
-        _build_cache()
-    
-    # get() 是安全获取字典值的方法
-    # 如果键不存在，返回第二个参数（默认值）
-    return _data_cache.get(resource_id)
+	# 如果缓存为空，构建缓存
+	if _data_cache.is_empty():
+		_build_cache()
+	
+	# get() 是安全获取字典值的方法
+	# 如果键不存在，返回第二个参数（默认值）
+	return _data_cache.get(resource_id)
 
 # ----------------------------------------
 # 获取资源预制体函数
@@ -79,7 +79,16 @@ func get_resource_data(resource_id: StringName) -> ResourceData:
 # 返回：PackedScene 对象（预制体），找不到则返回 null
 # ----------------------------------------
 func get_resource_scene(resource_id: StringName) -> PackedScene:
-    return resource_scenes.get(resource_id)
+	return resource_scenes.get(resource_id)
+
+# ----------------------------------------
+# 获取所有资源数据函数
+# 返回资源数据列表的副本
+#
+# 返回：所有资源数据的数组
+# ----------------------------------------
+func get_all_resource_data() -> Array[ResourceData]:
+	return resource_datas.duplicate()
 
 # ----------------------------------------
 # 注册资源函数
@@ -93,16 +102,16 @@ func get_resource_scene(resource_id: StringName) -> PackedScene:
 #   registry.register_resource(grass_data, grass_scene)
 # ----------------------------------------
 func register_resource(data: ResourceData, scene: PackedScene = null) -> void:
-    # 添加到数据列表（如果不存在）
-    if data not in resource_datas:
-        resource_datas.append(data)
-    
-    # 添加预制体到字典（如果提供了）
-    if scene:
-        resource_scenes[data.resource_id] = scene
-    
-    # 更新缓存
-    _data_cache[data.resource_id] = data
+	# 添加到数据列表（如果不存在）
+	if data not in resource_datas:
+		resource_datas.append(data)
+	
+	# 添加预制体到字典（如果提供了）
+	if scene:
+		resource_scenes[data.resource_id] = scene
+	
+	# 更新缓存
+	_data_cache[data.resource_id] = data
 
 # ============================================
 # 私有方法
@@ -117,11 +126,11 @@ func register_resource(data: ResourceData, scene: PackedScene = null) -> void:
 # 用字典查询只需要 O(1) 复杂度
 # ----------------------------------------
 func _build_cache() -> void:
-    _data_cache.clear()
-    
-    for data in resource_datas:
-        # 检查数据是否有效
-        # data.resource_id 确保 ID 存在
-        if data and data.resource_id:
-            # 以 resource_id 为键，存入字典
-            _data_cache[data.resource_id] = data
+	_data_cache.clear()
+	
+	for data in resource_datas:
+		# 检查数据是否有效
+		# data.resource_id 确保 ID 存在
+		if data and data.resource_id:
+			# 以 resource_id 为键，存入字典
+			_data_cache[data.resource_id] = data

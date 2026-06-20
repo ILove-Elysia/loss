@@ -49,9 +49,9 @@ signal regenerated()
 # 这是"模板"，定义了这个资源的所有属性
 # 当这个值改变时，会自动调用 _apply_resource_data()
 @export var resource_data: ResourceData:
-    set(value):
-        resource_data = value
-        _apply_resource_data()
+	set(value):
+		resource_data = value
+		_apply_resource_data()
 
 # ============================================
 # 成员变量
@@ -83,13 +83,13 @@ var _regen_component: ResourceRegeneration
 # _ready() 在节点进入场景树时调用一次
 # 相当于"出生"时要做的事
 func _ready() -> void:
-    # 1. 设置各个组件
-    _setup_components()
-    # 2. 连接组件之间的信号
-    _connect_signals()
-    # 3. 如果已经设置了资源数据，应用它
-    if resource_data:
-        _apply_resource_data()
+	# 1. 设置各个组件
+	_setup_components()
+	# 2. 连接组件之间的信号
+	_connect_signals()
+	# 3. 如果已经设置了资源数据，应用它
+	if resource_data:
+		_apply_resource_data()
 
 # ============================================
 # 组件设置
@@ -104,36 +104,36 @@ func _ready() -> void:
 # 代码会动态检查并创建缺失的组件
 # ----------------------------------------
 func _setup_components() -> void:
-    # 尝试获取已存在的子节点
-    # $ 是 get_node() 的简写
-    # $StateMachine 相当于 get_node("StateMachine")
-    _state_machine = $StateMachine
-    _visual_component = $Visual
-    _interaction_component = $Interaction
-    _regen_component = $Regeneration
-    
-    # 如果子节点不存在，就创建新的
-    # 这确保了即使预制体没有这些节点，代码也能正常工作
-    
-    if not _state_machine:
-        _state_machine = ResourceStateMachine.new()
-        _state_machine.name = "StateMachine"
-        add_child(_state_machine)
-    
-    if not _visual_component:
-        _visual_component = ResourceVisual.new()
-        _visual_component.name = "Visual"
-        add_child(_visual_component)
-    
-    if not _interaction_component:
-        _interaction_component = ResourceInteraction.new()
-        _interaction_component.name = "Interaction"
-        add_child(_interaction_component)
-    
-    if not _regen_component:
-        _regen_component = ResourceRegeneration.new()
-        _regen_component.name = "Regeneration"
-        add_child(_regen_component)
+	# 尝试获取已存在的子节点
+	# $ 是 get_node() 的简写
+	# $StateMachine 相当于 get_node("StateMachine")
+	_state_machine = $StateMachine
+	_visual_component = $Visual
+	_interaction_component = $Interaction
+	_regen_component = $Regeneration
+	
+	# 如果子节点不存在，就创建新的
+	# 这确保了即使预制体没有这些节点，代码也能正常工作
+	
+	if not _state_machine:
+		_state_machine = ResourceStateMachine.new()
+		_state_machine.name = "StateMachine"
+		add_child(_state_machine)
+	
+	if not _visual_component:
+		_visual_component = ResourceVisual.new()
+		_visual_component.name = "Visual"
+		add_child(_visual_component)
+	
+	if not _interaction_component:
+		_interaction_component = ResourceInteraction.new()
+		_interaction_component.name = "Interaction"
+		add_child(_interaction_component)
+	
+	if not _regen_component:
+		_regen_component = ResourceRegeneration.new()
+		_regen_component.name = "Regeneration"
+		add_child(_regen_component)
 
 # ----------------------------------------
 # 连接信号函数
@@ -144,34 +144,34 @@ func _setup_components() -> void:
 # 当信号发出时，接收者的处理函数会被自动调用
 # ----------------------------------------
 func _connect_signals() -> void:
-    # 当状态机状态改变时，调用 _on_state_changed
-    if _state_machine:
-        _state_machine.state_changed.connect(_on_state_changed)
-    
-    # 当交互组件收到采集请求时
-    if _interaction_component:
-        _interaction_component.harvest_requested.connect(_on_harvest_requested)
-        _interaction_component.dig_requested.connect(_on_dig_requested)
-    
-    # 当再生组件完成再生时
-    if _regen_component:
-        _regen_component.regeneration_complete.connect(_on_regeneration_complete)
+	# 当状态机状态改变时，调用 _on_state_changed
+	if _state_machine:
+		_state_machine.state_changed.connect(_on_state_changed)
+	
+	# 当交互组件收到采集请求时
+	if _interaction_component:
+		_interaction_component.harvest_requested.connect(_on_harvest_requested)
+		_interaction_component.dig_requested.connect(_on_dig_requested)
+	
+	# 当再生组件完成再生时
+	if _regen_component:
+		_regen_component.regeneration_complete.connect(_on_regeneration_complete)
 
 # ----------------------------------------
 # 应用资源数据函数
 # 将配置数据传递给各个组件
 # ----------------------------------------
 func _apply_resource_data() -> void:
-    if not resource_data:
-        return
-    
-    # 将数据传递给各个组件
-    if _visual_component:
-        _visual_component.setup(resource_data)
-    if _interaction_component:
-        _interaction_component.setup(resource_data)
-    if _regen_component:
-        _regen_component.setup(resource_data)
+	if not resource_data:
+		return
+	
+	# 将数据传递给各个组件
+	if _visual_component:
+		_visual_component.setup(resource_data)
+	if _interaction_component:
+		_interaction_component.setup(resource_data)
+	if _regen_component:
+		_regen_component.setup(resource_data)
 
 # ============================================
 # 公共方法
@@ -184,12 +184,12 @@ func _apply_resource_data() -> void:
 # 参数：new_state - 新的状态
 # ----------------------------------------
 func set_state(new_state: ResourceState.State) -> void:
-    if current_state == new_state:
-        return
-    
-    current_state = new_state
-    _state_machine.change_state(new_state)
-    state_changed.emit(new_state)
+	if current_state == new_state:
+		return
+	
+	current_state = new_state
+	_state_machine.change_state(new_state)
+	state_changed.emit(new_state)
 
 # ----------------------------------------
 # 采集函数
@@ -205,36 +205,36 @@ func set_state(new_state: ResourceState.State) -> void:
 # 5. 开始再生计时
 # ----------------------------------------
 func harvest(harvester: Node) -> void:
-    # 如果不是生长状态，不能采集
-    if current_state != ResourceState.State.GROWING:
-        return
-    
-    # 切换到过渡状态
-    set_state(ResourceState.State.TRANSITIONING)
-    
-    # 播放采集动画
-    if _visual_component:
-        _visual_component.play_harvest_animation()
-    
-    # 计算掉落数量
-    var drop_count = resource_data.get_drop_count()
-    
-    # 给玩家物品
-    _give_item_to(harvester, resource_data.drop_item_id, drop_count)
-    
-    # 发出被采集信号
-    harvested.emit(harvester)
-    
-    # 等待过渡动画播放完成
-    # await 会暂停这个函数，直到条件满足
-    await get_tree().create_timer(resource_data.transition_duration).timeout
-    
-    # 动画播放完成，切换到已采集状态
-    set_state(ResourceState.State.HARVESTED)
-    
-    # 如果可以再生，开始再生计时
-    if resource_data.can_regenerate and _regen_component:
-        _regen_component.start_regeneration()
+	# 如果不是生长状态，不能采集
+	if current_state != ResourceState.State.GROWING:
+		return
+	
+	# 切换到过渡状态
+	set_state(ResourceState.State.TRANSITIONING)
+	
+	# 播放采集动画
+	if _visual_component:
+		_visual_component.play_harvest_animation()
+	
+	# 计算掉落数量
+	var drop_count = resource_data.get_drop_count()
+	
+	# 给玩家物品
+	_give_item_to(harvester, resource_data.drop_item_id, drop_count)
+	
+	# 发出被采集信号
+	harvested.emit(harvester)
+	
+	# 等待过渡动画播放完成
+	# await 会暂停这个函数，直到条件满足
+	await get_tree().create_timer(resource_data.transition_duration).timeout
+	
+	# 动画播放完成，切换到已采集状态
+	set_state(ResourceState.State.HARVESTED)
+	
+	# 如果可以再生，开始再生计时
+	if resource_data.can_regenerate and _regen_component:
+		_regen_component.start_regeneration()
 
 # ----------------------------------------
 # 挖掘函数
@@ -248,19 +248,19 @@ func harvest(harvester: Node) -> void:
 # 3. 移除这个资源实体
 # ----------------------------------------
 func dig(digger: Node) -> void:
-    # 如果这个资源不能被挖掘，直接返回
-    if not resource_data.can_dig:
-        return
-    
-    # 给玩家挖掘掉落物
-    _give_item_to(digger, resource_data.dig_drop_item_id, resource_data.dig_drop_count)
-    
-    # 发出被挖掘信号
-    digged.emit(digger)
-    
-    # 移除这个资源实体
-    # queue_free() 会安全地删除节点
-    queue_free()
+	# 如果这个资源不能被挖掘，直接返回
+	if not resource_data.can_dig:
+		return
+	
+	# 给玩家挖掘掉落物
+	_give_item_to(digger, resource_data.dig_drop_item_id, resource_data.dig_drop_count)
+	
+	# 发出被挖掘信号
+	digged.emit(digger)
+	
+	# 移除这个资源实体
+	# queue_free() 会安全地删除节点
+	queue_free()
 
 # ============================================
 # 存档相关
@@ -273,17 +273,17 @@ func dig(digger: Node) -> void:
 # 返回：包含所有需要保存数据的字典
 # ----------------------------------------
 func get_save_data() -> Dictionary:
-    return {
-        "instance_id": instance_id,
-        "resource_id": str(resource_data.resource_id),
-        "position": {
-            "x": global_position.x,
-            "y": global_position.y,
-            "z": global_position.z
-        },
-        "state": current_state,
-        "regen_time_remaining": _regen_component.get_remaining_time() if _regen_component else 0.0
-    }
+	return {
+		"instance_id": instance_id,
+		"resource_id": str(resource_data.resource_id),
+		"position": {
+			"x": global_position.x,
+			"y": global_position.y,
+			"z": global_position.z
+		},
+		"state": current_state,
+		"regen_time_remaining": _regen_component.get_remaining_time() if _regen_component else 0.0
+	}
 
 # ----------------------------------------
 # 加载存档数据函数
@@ -292,19 +292,19 @@ func get_save_data() -> Dictionary:
 # 参数：data - 之前保存的数据字典
 # ----------------------------------------
 func load_save_data(data: Dictionary) -> void:
-    instance_id = data.get("instance_id", -1)
-    current_state = data.get("state", ResourceState.State.GROWING)
-    regen_time_remaining = data.get("regen_time_remaining", 0.0)
-    
-    # 如果状态是已采集
-    if current_state == ResourceState.State.HARVESTED:
-        # 立即设置视觉状态
-        if _visual_component:
-            _visual_component.set_visual_state_immediate(ResourceState.State.HARVESTED)
-        
-        # 如果可以再生且还有剩余时间，继续再生
-        if resource_data.can_regenerate and regen_time_remaining > 0 and _regen_component:
-            _regen_component.resume_regeneration(regen_time_remaining)
+	instance_id = data.get("instance_id", -1)
+	current_state = data.get("state", ResourceState.State.GROWING)
+	regen_time_remaining = data.get("regen_time_remaining", 0.0)
+	
+	# 如果状态是已采集
+	if current_state == ResourceState.State.HARVESTED:
+		# 立即设置视觉状态
+		if _visual_component:
+			_visual_component.set_visual_state_immediate(ResourceState.State.HARVESTED)
+		
+		# 如果可以再生且还有剩余时间，继续再生
+		if resource_data.can_regenerate and regen_time_remaining > 0 and _regen_component:
+			_regen_component.resume_regeneration(regen_time_remaining)
 
 # ============================================
 # 私有方法
@@ -320,14 +320,14 @@ func load_save_data(data: Dictionary) -> void:
 #   count - 数量
 # ----------------------------------------
 func _give_item_to(target: Node, item_id: StringName, count: int) -> void:
-    # 方法1：直接调用目标的 add_item 方法
-    if target.has_method("add_item"):
-        target.add_item(item_id, count)
-    # 方法2：通过子节点 Inventory 添加
-    elif target.has_node("Inventory"):
-        var inventory = target.get_node("Inventory")
-        if inventory.has_method("add_item"):
-            inventory.add_item(item_id, count)
+	# 方法1：直接调用目标的 add_item 方法
+	if target.has_method("add_item"):
+		target.add_item(item_id, count)
+	# 方法2：通过子节点 Inventory 添加
+	elif target.has_node("Inventory"):
+		var inventory = target.get_node("Inventory")
+		if inventory.has_method("add_item"):
+			inventory.add_item(item_id, count)
 
 # ============================================
 # 信号处理函数
@@ -336,19 +336,19 @@ func _give_item_to(target: Node, item_id: StringName, count: int) -> void:
 
 # 状态改变时的处理
 func _on_state_changed(new_state: ResourceState.State) -> void:
-    current_state = new_state
-    if _visual_component:
-        _visual_component.set_visual_state(new_state)
+	current_state = new_state
+	if _visual_component:
+		_visual_component.set_visual_state(new_state)
 
 # 收到采集请求时的处理
 func _on_harvest_requested(harvester: Node) -> void:
-    harvest(harvester)
+	harvest(harvester)
 
 # 收到挖掘请求时的处理
 func _on_dig_requested(digger: Node) -> void:
-    dig(digger)
+	dig(digger)
 
 # 再生完成时的处理
 func _on_regeneration_complete() -> void:
-    set_state(ResourceState.State.GROWING)
-    regenerated.emit()
+	set_state(ResourceState.State.GROWING)
+	regenerated.emit()

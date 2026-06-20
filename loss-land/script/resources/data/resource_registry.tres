@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ResourceRegistry" format=3 uid="uid://bvneoolsrpytf"]
+
+[ext_resource type="Script" uid="uid://nl00ivtjm84r" path="res://script/resources/data/resource_registry.gd" id="1"]
+[ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_dpo8g"]
+[ext_resource type="Resource" uid="uid://ct0bl3ogrinot" path="res://script/resources/data/grass_data.tres" id="2"]
+[ext_resource type="Resource" uid="uid://cdygm3o68cjv0" path="res://script/resources/data/tree_data.tres" id="3"]
+[ext_resource type="Resource" uid="uid://pcx681brgiwm" path="res://script/resources/data/stone_data.tres" id="4"]
+
+[resource]
+script = ExtResource("1")
+resource_datas = Array[ExtResource("1_dpo8g")]([ExtResource("2"), ExtResource("3"), ExtResource("4")])
+metadata/_custom_type_script = "uid://bt0ggfep1hkdu"
