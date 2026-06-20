@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ResourceData" format=3 uid="uid://cdygm3o68cjv0"]
+
+[ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_cuinr"]
+
+[resource]
+script = ExtResource("1_cuinr")
+resource_id = "tree"
+display_name = "树"
+resource_type = 2
+growing_animation = "growing"
+harvested_animation = "stump"
+transition_duration = 1.0
+min_distance = 5.0
+drop_item_id = "log"
+drop_count_min = 2
+drop_count_max = 4
+regeneration_time = 600.0
+metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

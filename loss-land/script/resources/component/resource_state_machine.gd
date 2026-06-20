@@ -62,24 +62,24 @@ var _state_data: Dictionary = {}
 # 5. 发出状态改变信号
 # ----------------------------------------
 func change_state(new_state: ResourceState.State) -> void:
-    # 如果已经是目标状态，不做任何事
-    if current_state == new_state:
-        return
-    
-    # 1. 退出当前状态（执行清理逻辑）
-    _exit_state(current_state)
-    
-    # 2. 记录上一个状态
-    previous_state = current_state
-    
-    # 3. 更新当前状态
-    current_state = new_state
-    
-    # 4. 进入新状态（执行初始化逻辑）
-    _enter_state(new_state)
-    
-    # 5. 发出信号通知其他组件
-    state_changed.emit(new_state)
+	# 如果已经是目标状态，不做任何事
+	if current_state == new_state:
+		return
+	
+	# 1. 退出当前状态（执行清理逻辑）
+	_exit_state(current_state)
+	
+	# 2. 记录上一个状态
+	previous_state = current_state
+	
+	# 3. 更新当前状态
+	current_state = new_state
+	
+	# 4. 进入新状态（执行初始化逻辑）
+	_enter_state(new_state)
+	
+	# 5. 发出信号通知其他组件
+	state_changed.emit(new_state)
 
 # ============================================
 # 状态数据操作
@@ -100,21 +100,21 @@ func change_state(new_state: ResourceState.State) -> void:
 #   var p = machine.get_state_data("progress", 0.0)  # 读取
 # ----------------------------------------
 func get_state_data(key: String, default: Variant = null) -> Variant:
-    return _state_data.get(key, default)
+	return _state_data.get(key, default)
 
 # ----------------------------------------
 # 设置状态数据
 # 在状态中存储数据
 # ----------------------------------------
 func set_state_data(key: String, value: Variant) -> void:
-    _state_data[key] = value
+	_state_data[key] = value
 
 # ----------------------------------------
 # 清除所有状态数据
 # 切换状态时调用，清除旧状态的数据
 # ----------------------------------------
 func clear_state_data() -> void:
-    _state_data.clear()
+	_state_data.clear()
 
 # ============================================
 # 状态进入/退出处理
@@ -130,20 +130,20 @@ func clear_state_data() -> void:
 #   HARVESTED 状态：停止动画，显示枯萎贴图
 # ----------------------------------------
 func _enter_state(state: ResourceState.State) -> void:
-    match state:
-        ResourceState.State.GROWING:
-            # 进入生长状态
-            # 可以在这里播放生长动画或特效
-            pass
-        ResourceState.State.HARVESTED:
-            # 进入已采集状态
-            pass
-        ResourceState.State.REGENERATING:
-            # 进入再生状态
-            pass
-        ResourceState.State.TRANSITIONING:
-            # 进入过渡状态
-            pass
+	match state:
+		ResourceState.State.GROWING:
+			# 进入生长状态
+			# 可以在这里播放生长动画或特效
+			pass
+		ResourceState.State.HARVESTED:
+			# 进入已采集状态
+			pass
+		ResourceState.State.REGENERATING:
+			# 进入再生状态
+			pass
+		ResourceState.State.TRANSITIONING:
+			# 进入过渡状态
+			pass
 
 # ----------------------------------------
 # 退出状态函数
@@ -154,16 +154,16 @@ func _enter_state(state: ResourceState.State) -> void:
 #   退出生长状态：停止生长动画
 # ----------------------------------------
 func _exit_state(state: ResourceState.State) -> void:
-    match state:
-        ResourceState.State.GROWING:
-            # 退出生长状态
-            pass
-        ResourceState.State.HARVESTED:
-            # 退出已采集状态
-            pass
-        ResourceState.State.REGENERATING:
-            # 退出再生状态
-            pass
-        ResourceState.State.TRANSITIONING:
-            # 退出过渡状态
-            pass
+	match state:
+		ResourceState.State.GROWING:
+			# 退出生长状态
+			pass
+		ResourceState.State.HARVESTED:
+			# 退出已采集状态
+			pass
+		ResourceState.State.REGENERATING:
+			# 退出再生状态
+			pass
+		ResourceState.State.TRANSITIONING:
+			# 退出过渡状态
+			pass

@@ -18,7 +18,7 @@
 # ============================================
 
 class_name ResourceSpawner
-extends Node
+extends Node3D
 
 # ============================================
 # 导出变量
@@ -64,24 +64,24 @@ var _random: RandomNumberGenerator = RandomNumberGenerator.new()
 # 3. 重复直到生成足够数量或尝试次数用尽
 # ----------------------------------------
 func generate_positions(data: ResourceData, count: int, existing_positions: Array[Vector3] = []) -> Array[Vector3]:
-    var positions: Array[Vector3] = []
-    var attempts = 0
-    # 最大尝试次数（防止无限循环）
-    var max_attempts = count * 10
-    
-    # 循环直到生成足够数量或尝试次数用尽
-    while positions.size() < count and attempts < max_attempts:
-        attempts += 1
-        
-        # 生成随机位置
-        var pos = _generate_random_position()
-        
-        # 检查位置是否有效
-        if _is_valid_position(pos, data, existing_positions):
-            positions.append(pos)
-            existing_positions.append(pos)
-    
-    return positions
+	var positions: Array[Vector3] = []
+	var attempts = 0
+	# 最大尝试次数（防止无限循环）
+	var max_attempts = count * 10
+	
+	# 循环直到生成足够数量或尝试次数用尽
+	while positions.size() < count and attempts < max_attempts:
+		attempts += 1
+		
+		# 生成随机位置
+		var pos = _generate_random_position()
+		
+		# 检查位置是否有效
+		if _is_valid_position(pos, data, existing_positions):
+			positions.append(pos)
+			existing_positions.append(pos)
+	
+	return positions
 
 # ============================================
 # 私有方法
@@ -92,14 +92,14 @@ func generate_positions(data: ResourceData, count: int, existing_positions: Arra
 # 在生成区域内生成一个随机点
 # ----------------------------------------
 func _generate_random_position() -> Vector3:
-    # spawn_area.position 是包围盒起点
-    # spawn_area.end 是包围盒终点
-    # randf_range 生成指定范围内的随机浮点数
-    return Vector3(
-        _random.randf_range(spawn_area.position.x, spawn_area.end.x),
-        _random.randf_range(spawn_area.position.y, spawn_area.end.y),
-        _random.randf_range(spawn_area.position.z, spawn_area.end.z)
-    )
+	# spawn_area.position 是包围盒起点
+	# spawn_area.end 是包围盒终点
+	# randf_range 生成指定范围内的随机浮点数
+	return Vector3(
+		_random.randf_range(spawn_area.position.x, spawn_area.end.x),
+		_random.randf_range(spawn_area.position.y, spawn_area.end.y),
+		_random.randf_range(spawn_area.position.z, spawn_area.end.z)
+	)
 
 # ----------------------------------------
 # 检查位置有效性函数
@@ -111,61 +111,61 @@ func _generate_random_position() -> Vector3:
 # 3. 是否在水中
 # ----------------------------------------
 func _is_valid_position(pos: Vector3, data: ResourceData, existing: Array[Vector3]) -> bool:
-    # 检查1：与其他资源的距离
-    # distance_to 计算两点之间的距离
-    for other_pos in existing:
-        if pos.distance_to(other_pos) < data.min_distance:
-            return false  # 距离太近，无效
-    
-    # 检查2：是否在障碍物上
-    if _is_in_obstacle(pos):
-        return false
-    
-    # 检查3：是否在水中
-    if _is_in_water(pos):
-        return false
-    
-    # 所有检查通过，位置有效
-    return true
+	# 检查1：与其他资源的距离
+	# distance_to 计算两点之间的距离
+	for other_pos in existing:
+		if pos.distance_to(other_pos) < data.min_distance:
+			return false  # 距离太近，无效
+	
+	# 检查2：是否在障碍物上
+	if _is_in_obstacle(pos):
+		return false
+	
+	# 检查3：是否在水中
+	if _is_in_water(pos):
+		return false
+	
+	# 所有检查通过，位置有效
+	return true
 
 # ----------------------------------------
 # 检查是否在障碍物中函数
 # 使用射线检测
 # ----------------------------------------
 func _is_in_obstacle(pos: Vector3) -> bool:
-    # 获取物理空间状态
-    # direct_space_state 允许直接查询物理世界
-    var space_state = get_world_3d().direct_space_state
-    
-    # 创建射线查询参数
-    var query = PhysicsRayQueryParameters3D.create(
-        pos + Vector3.UP,   # 起点（位置上方）
-        pos + Vector3.DOWN   # 终点（位置下方）
-    )
-    
-    # 设置检测的碰撞层
-    query.collision_mask = _layers_to_mask(obstacle_layers)
-    
-    # 执行射线检测
-    # 如果有碰撞，result 会有数据
-    # 如果没有碰撞，result 是空的
-    var result = space_state.intersect_ray(query)
-    
-    # is_empty() 检查字典是否为空
-    return not result.is_empty()
+	# 获取物理空间状态
+	# direct_space_state 允许直接查询物理世界
+	var space_state = get_world_3d().direct_space_state
+	
+	# 创建射线查询参数
+	var query = PhysicsRayQueryParameters3D.create(
+		pos + Vector3.UP,   # 起点（位置上方）
+		pos + Vector3.DOWN   # 终点（位置下方）
+	)
+	
+	# 设置检测的碰撞层
+	query.collision_mask = _layers_to_mask(obstacle_layers)
+	
+	# 执行射线检测
+	# 如果有碰撞，result 会有数据
+	# 如果没有碰撞，result 是空的
+	var result = space_state.intersect_ray(query)
+	
+	# is_empty() 检查字典是否为空
+	return not result.is_empty()
 
 # ----------------------------------------
 # 检查是否在水中函数
 # ----------------------------------------
 func _is_in_water(pos: Vector3) -> bool:
-    var space_state = get_world_3d().direct_space_state
-    var query = PhysicsRayQueryParameters3D.create(
-        pos + Vector3.UP,
-        pos + Vector3.DOWN
-    )
-    query.collision_mask = _layers_to_mask(water_layers)
-    var result = space_state.intersect_ray(query)
-    return not result.is_empty()
+	var space_state = get_world_3d().direct_space_state
+	var query = PhysicsRayQueryParameters3D.create(
+		pos + Vector3.UP,
+		pos + Vector3.DOWN
+	)
+	query.collision_mask = _layers_to_mask(water_layers)
+	var result = space_state.intersect_ray(query)
+	return not result.is_empty()
 
 # ----------------------------------------
 # 层数转掩码函数
@@ -184,9 +184,9 @@ func _is_in_water(pos: Vector3) -> bool:
 #   表示第2层和第4层
 # ----------------------------------------
 func _layers_to_mask(layers: Array[int]) -> int:
-    var mask = 0
-    for layer in layers:
-        # |= 是位或赋值
-        # 1 << (layer - 1) 将1左移 layer-1 位
-        mask |= (1 << (layer - 1))
-    return mask
+	var mask = 0
+	for layer in layers:
+		# |= 是位或赋值
+		# 1 << (layer - 1) 将1左移 layer-1 位
+		mask |= (1 << (layer - 1))
+	return mask

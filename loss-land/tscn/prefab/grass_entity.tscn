@@ -1,0 +1,28 @@
+[gd_scene format=3 uid="uid://bdral3goqm52c"]
+
+[ext_resource type="Script" uid="uid://pppkk14n8a7f" path="res://script/resources/entity/resource_entity.gd" id="1_etel3"]
+[ext_resource type="Script" uid="uid://bufbhtwjff45w" path="res://script/resources/component/resource_state_machine.gd" id="2_ifuh5"]
+[ext_resource type="Script" uid="uid://cb8ain2brbpia" path="res://script/resources/component/resource_interaction.gd" id="3_5j0li"]
+[ext_resource type="Script" uid="uid://cayrkosr8ha1m" path="res://script/resources/component/resource_regeneration.gd" id="4_s506x"]
+
+[node name="GrassEntity" type="Node3D" unique_id=1715112268]
+script = ExtResource("1_etel3")
+
+[node name="StateMachine" type="Node" parent="." unique_id=722351540]
+script = ExtResource("2_ifuh5")
+
+[node name="Node" type="Node3D" parent="." unique_id=1488969632]
+
+[node name="Sprite" type="AnimatedSprite3D" parent="Node" unique_id=696975906]
+
+[node name="Interaction" type="Node" parent="." unique_id=1219694522]
+script = ExtResource("3_5j0li")
+
+[node name="Area" type="Area3D" parent="Interaction" unique_id=376156681]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Interaction/Area" unique_id=91519081]
+
+[node name="Regeneration" type="Node" parent="." unique_id=1934446845]
+script = ExtResource("4_s506x")
+
+[node name="Timer" type="Timer" parent="Regeneration" unique_id=1937737007]

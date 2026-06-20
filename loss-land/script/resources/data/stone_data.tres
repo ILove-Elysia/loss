@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ResourceData" format=3 uid="uid://pcx681brgiwm"]
+
+[ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_ys3r6"]
+
+[resource]
+script = ExtResource("1_ys3r6")
+resource_id = "stone"
+display_name = "石头"
+resource_type = 3
+growing_animation = "growing"
+harvested_animation = "broken"
+transition_duration = 0.6
+min_distance = 3.0
+drop_item_id = "rock"
+drop_count_max = 3
+can_regenerate = false
+regeneration_time = 0.0
+metadata/_custom_type_script = "uid://bt0ggfep1hkdu"
