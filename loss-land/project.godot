@@ -12,7 +12,7 @@ config_version=5
 
 config/name="loss_land"
 run/main_scene="uid://db8r1pnvh275j"
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://art/icon.svg"
 
 [editor_plugins]
