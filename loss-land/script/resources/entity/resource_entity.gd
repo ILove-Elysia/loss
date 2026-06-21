@@ -105,12 +105,12 @@ func _ready() -> void:
 # ----------------------------------------
 func _setup_components() -> void:
 	# 尝试获取已存在的子节点
-	# $ 是 get_node() 的简写
-	# $StateMachine 相当于 get_node("StateMachine")
-	_state_machine = $StateMachine
-	_visual_component = $Visual
-	_interaction_component = $Interaction
-	_regen_component = $Regeneration
+	# get_node_or_null() 如果节点不存在会返回 null，不会报错
+	# 比 $ 或 get_node() 更安全
+	_state_machine = get_node_or_null("StateMachine")
+	_visual_component = get_node_or_null("Visual")
+	_interaction_component = get_node_or_null("Interaction")
+	_regen_component = get_node_or_null("Regeneration")
 	
 	# 如果子节点不存在，就创建新的
 	# 这确保了即使预制体没有这些节点，代码也能正常工作
