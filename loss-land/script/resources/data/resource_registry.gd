@@ -27,9 +27,9 @@ extends Resource
 # 资源预制体字典
 # 键是资源ID（StringName），值是预制体场景（PackedScene）
 # 示例：
-#   "grass" -> grass_entity.tscn
-#   "tree"  -> tree_entity.tscn
-@export var resource_scenes: Dictionary = {}
+#   &"grass" -> grass_entity.tscn
+#   &"tree"  -> tree_entity.tscn
+@export var resource_scenes: Dictionary[StringName, PackedScene] = {}
 
 # ============================================
 # 私有变量
