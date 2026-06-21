@@ -253,7 +253,7 @@ func dig(digger: Node) -> void:
 		return
 	
 	# 给玩家挖掘掉落物
-	_give_item_to(digger, resource_data.dig_drop_item_id, resource_data.dig_drop_count)
+	_give_item_to(digger, resource_data.dig_drop_item_id, resource_data.get_dig_drop_count())
 	
 	# 发出被挖掘信号
 	digged.emit(digger)
@@ -311,6 +311,20 @@ func load_save_data(data: Dictionary) -> void:
 # ============================================
 
 # ----------------------------------------
+# 获取物品数据函数
+# 通过物品ID查找物品数据
+#
+# 参数：item_id - 物品ID
+# 返回：ItemData 对象或 null
+# ----------------------------------------
+func _get_item_data(item_id: StringName) -> ItemData:
+	# 从物品注册表获取
+	var registry = ItemRegistry.get_registry()
+	if registry:
+		return registry.get_item(item_id)
+	return null
+
+# ----------------------------------------
 # 给予物品函数
 # 尝试给目标添加物品
 #
@@ -320,14 +334,22 @@ func load_save_data(data: Dictionary) -> void:
 #   count - 数量
 # ----------------------------------------
 func _give_item_to(target: Node, item_id: StringName, count: int) -> void:
-	# 方法1：直接调用目标的 add_item 方法
-	if target.has_method("add_item"):
-		target.add_item(item_id, count)
-	# 方法2：通过子节点 Inventory 添加
-	elif target.has_node("Inventory"):
+	# 获取物品数据
+	var item_data = _get_item_data(item_id)
+	if not item_data:
+		print("错误：找不到物品数据 ", item_id)
+		return
+
+	# 方法1：通过子节点 Inventory 添加
+	if target.has_node("Inventory"):
 		var inventory = target.get_node("Inventory")
 		if inventory.has_method("add_item"):
-			inventory.add_item(item_id, count)
+			inventory.add_item(item_data, count)
+			return
+
+	# 方法2：直接调用目标的 add_item 方法
+	if target.has_method("add_item"):
+		target.add_item(item_data, count)
 
 # ============================================
 # 信号处理函数

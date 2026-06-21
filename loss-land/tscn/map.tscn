@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://e8fw6weajj0q" path="res://script/resources/resource_manager.gd" id="2_yx4x3"]
 [ext_resource type="Resource" uid="uid://bvneoolsrpytf" path="res://script/resources/data/resource_registry.tres" id="3_x0n1c"]
 [ext_resource type="Script" uid="uid://cp1q2e0stnpi1" path="res://script/resources/spawn/resource_spawner.gd" id="4_e2bhf"]
+[ext_resource type="Script" uid="uid://c5gxpjccyt7u8" path="res://script/ui/inventory_ui.gd" id="5_e2bhf"]
 [ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="5_x0n1c"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_yx4x3"]
@@ -49,3 +50,13 @@ script = ExtResource("4_e2bhf")
 metadata/_custom_type_script = "uid://cp1q2e0stnpi1"
 
 [node name="ResourceContainer" type="Node3D" parent="." unique_id=771513188]
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=527698529]
+
+[node name="InventoryUI" type="Control" parent="CanvasLayer" unique_id=1939615469]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("5_e2bhf")
+metadata/_custom_type_script = "uid://c5gxpjccyt7u8"

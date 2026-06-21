@@ -226,3 +226,10 @@ enum HarvestTool {
 # ----------------------------------------
 func get_drop_count() -> int:
 	return randi_range(drop_count_min, drop_count_max)
+
+# ----------------------------------------
+# 获取挖掘掉落数量函数
+# 返回一个随机值，范围在 dig_drop_count_min 到 dig_drop_count_max 之间
+# ----------------------------------------
+func get_dig_drop_count() -> int:
+	return randi_range(dig_drop_count_min, dig_drop_count_max)

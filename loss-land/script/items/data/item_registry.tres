@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="ItemRegistry" format=3 uid="uid://bxv5e2xq508m7"]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_bkhi0"]
+[ext_resource type="Script" uid="uid://blddwnm4sv71x" path="res://script/items/data/item_registry.gd" id="2_c7u0y"]
+[ext_resource type="Resource" uid="uid://cdb87lhr1e601" path="res://script/items/data/grass_item.tres" id="2_xtljc"]
+
+[resource]
+script = ExtResource("2_c7u0y")
+items = Array[ExtResource("1_bkhi0")]([ExtResource("2_xtljc")])
+metadata/_custom_type_script = "uid://blddwnm4sv71x"
