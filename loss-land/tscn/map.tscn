@@ -68,5 +68,4 @@ anchors_preset = 0
 offset_right = 40.0
 offset_bottom = 40.0
 script = ExtResource("6_hud")
-max_health = 50
 metadata/_custom_type_script = "uid://chxm123"
