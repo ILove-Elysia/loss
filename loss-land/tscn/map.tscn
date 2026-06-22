@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://cp1q2e0stnpi1" path="res://script/resources/spawn/resource_spawner.gd" id="4_e2bhf"]
 [ext_resource type="Script" uid="uid://c5gxpjccyt7u8" path="res://script/ui/inventory_ui.gd" id="5_e2bhf"]
 [ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="5_x0n1c"]
+[ext_resource type="Script" uid="uid://chxm123" path="res://script/ui/hud_ui.gd" id="6_hud"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_yx4x3"]
 
@@ -60,3 +61,12 @@ offset_right = 40.0
 offset_bottom = 40.0
 script = ExtResource("5_e2bhf")
 metadata/_custom_type_script = "uid://c5gxpjccyt7u8"
+
+[node name="HUDUI" type="Control" parent="CanvasLayer" unique_id=123456]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("6_hud")
+max_health = 50
+metadata/_custom_type_script = "uid://chxm123"
