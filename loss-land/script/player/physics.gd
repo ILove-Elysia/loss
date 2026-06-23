@@ -52,8 +52,18 @@ func _ready():
 	# 连接动画信号
 	spr.animation_finished.connect(_on_attack_animation_finished)
 	spr.frame_changed.connect(_on_attack_animation_frame_changed)
+	
+	# 初始化HUD血量显示
+	_update_hud_health()
 
 func _physics_process(delta):
+	# 死亡后禁用所有操作
+	if current_health <= 0:
+		velocity.x = 0
+		velocity.z = 0
+		move_and_slide()
+		return
+	
 	# 更新攻击冷却计时器
 	if _attack_timer > 0:
 		_attack_timer -= delta
@@ -108,6 +118,10 @@ func _input(event: InputEvent) -> void:
 ## 执行攻击动作
 ## 包含：播放动画、设置攻击状态、检测命中
 func perform_attack() -> void:
+	# 死亡后不能攻击
+	if current_health <= 0:
+		return
+	
 	# 如果正在攻击或冷却中，则不能攻击
 	if is_attacking or _attack_timer > 0:
 		return
@@ -127,8 +141,21 @@ func perform_attack() -> void:
 func take_damage(damage: int) -> void:
 	current_health = max(0, current_health - damage)
 	print("玩家受到", damage, "点伤害！剩余生命:", current_health, "/", max_health)
+	
+	# 更新HUD血量显示
+	_update_hud_health()
+	
 	if current_health <= 0:
+		# 死亡
 		print("玩家死亡！")
+		is_attacking = false
+		spr.play("die")
+
+## 更新HUD血量显示
+func _update_hud_health() -> void:
+	var hud = get_node_or_null("/root/Node3D/CanvasLayer/HUDUI")
+	if hud and hud.has_method("update_health"):
+		hud.update_health(current_health, max_health)
 
 ## 在攻击动画播放过程中进行伤害检测
 ## 使用球体检测，检测攻击范围内的所有敌人
@@ -253,6 +280,9 @@ func _on_attack_animation_finished() -> void:
 		# 攻击动画播放完毕，恢复idle状态
 		is_attacking = false
 		spr.play("idle")
+	elif spr.animation == "die":
+		# 死亡动画播放完毕
+		print("玩家死亡动画结束")
 
 ## 攻击动画播放到特定帧时的回调（用于激活伤害检测）
 func _on_attack_animation_frame_changed() -> void:
