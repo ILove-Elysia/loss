@@ -291,5 +291,4 @@ transform = Transform3D(-2.6434116, 2.0202911e-14, -8.742278e-08, 0, -2.6434116,
 flip_h = true
 flip_v = true
 sprite_frames = SubResource("SpriteFrames_hl5qd")
-animation = &"walk"
-frame_progress = 0.7409051
+animation = &"attack"

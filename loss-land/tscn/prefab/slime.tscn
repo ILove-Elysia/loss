@@ -1,0 +1,69 @@
+[gd_scene format=3 uid="uid://fgvu0ochdchi"]
+
+[ext_resource type="Script" uid="uid://slime001" path="res://script/enemy/slime.gd" id="1_slime"]
+[ext_resource type="Texture2D" uid="uid://bbhhgnwr4xv4f" path="res://art/icon.svg" id="2_icon"]
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_slime"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_icon")
+}],
+"loop": 0,
+"name": &"die",
+"speed": 1.0
+}, {
+"frames": [{
+"duration": 0.5,
+"texture": ExtResource("2_icon")
+}],
+"loop": 0,
+"name": &"hurt",
+"speed": 1.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_icon")
+}],
+"loop": 1,
+"name": &"idle",
+"speed": 1.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_icon")
+}, {
+"duration": 1.0,
+"texture": ExtResource("2_icon")
+}],
+"loop": 1,
+"name": &"walk",
+"speed": 4.0
+}]
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_slime"]
+height = 1.0
+radius = 0.33496094
+
+[node name="Slime" type="CharacterBody3D" unique_id=888888881]
+script = ExtResource("1_slime")
+
+[node name="Visual" type="Node3D" parent="." unique_id=888888882]
+
+[node name="Sprite" type="AnimatedSprite3D" parent="Visual" unique_id=888888883]
+transform = Transform3D(0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 0, 0.33484805, 0)
+sprite_frames = SubResource("SpriteFrames_slime")
+animation = &"idle"
+autoplay = "idle"
+
+[node name="Hitbox" type="Area3D" parent="." unique_id=888888884]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Hitbox" unique_id=888888885]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+shape = SubResource("CylinderShape3D_slime")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=888888886]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+shape = SubResource("CylinderShape3D_slime")
+
+[node name="NavigationAgent" type="NavigationAgent3D" parent="." unique_id=888888888]

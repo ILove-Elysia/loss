@@ -6,11 +6,11 @@
 [ext_resource type="Script" uid="uid://c5gxpjccyt7u8" path="res://script/ui/inventory_ui.gd" id="5_e2bhf"]
 [ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="5_x0n1c"]
 [ext_resource type="Script" uid="uid://chxm123" path="res://script/ui/hud_ui.gd" id="6_hud"]
+[ext_resource type="PackedScene" uid="uid://fgvu0ochdchi" path="res://tscn/prefab/slime.tscn" id="7_1f6fc"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_yx4x3"]
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_x0n1c"]
-size = Vector3(10, 1, 10)
+[sub_resource type="WorldBoundaryShape3D" id="WorldBoundaryShape3D_1f6fc"]
 
 [sub_resource type="Environment" id="Environment_fwkbq"]
 ambient_light_source = 2
@@ -26,12 +26,12 @@ collision_layer = 2
 collision_mask = 3
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=676697705]
-transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 6, 0.006177902, 1.1920929e-07, 0.0011007786)
+transform = Transform3D(9.993883, 0, 0, 0, 9.993883, 0, 0, 0, 9.993883, 0.0061779027, 1.1920929e-07, 0.0011007786)
 mesh = SubResource("PlaneMesh_yx4x3")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1699854013]
-transform = Transform3D(-1, 0, 1.509958e-07, 0, 1, 0, -1.509958e-07, 0, -1, 0, 0, 0)
-shape = SubResource("BoxShape3D_x0n1c")
+transform = Transform3D(-20, 0, 3.019916e-06, 0, 20, 0, -3.019916e-06, 0, -20, 0, 0, 0)
+shape = SubResource("WorldBoundaryShape3D_1f6fc")
 
 [node name="player" parent="." unique_id=244025735 instance=ExtResource("5_x0n1c")]
 
@@ -69,3 +69,6 @@ offset_right = 40.0
 offset_bottom = 40.0
 script = ExtResource("6_hud")
 metadata/_custom_type_script = "uid://chxm123"
+
+[node name="Slime" parent="." unique_id=888888881 instance=ExtResource("7_1f6fc")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.0044327, 0.02997154, 0.9904895)
