@@ -232,7 +232,8 @@ func _process_chase(delta: float) -> void:
 		return
 	
 	if distance <= stop_distance:
-		# 在攻击距离内
+		# 在攻击距离内 - 面向玩家并攻击
+		_look_at_direction(to_player.normalized())
 		if _attack_cooldown_timer <= 0:
 			_attack_player(player)
 		# 停止移动，等待攻击动画播放
@@ -254,11 +255,15 @@ func _look_at_camera() -> void:
 		var look_dir = cam.global_position - global_position
 		look_dir.y = 0  # 只在水平面旋转
 		if look_dir.length() > 0.001:
-			look_dir = look_dir.normalized()
-			# 让史莱姆本体朝向摄像机
-			look_at(global_position + look_dir, Vector3.UP)
-			# 根据朝向设置精灵翻转（与玩家一致）
-			sprite.flip_h = look_dir.x < 0
+			_look_at_direction(look_dir.normalized())
+
+## 让史莱姆朝向指定方向
+## @param direction 目标方向（水平面，已归一化）
+func _look_at_direction(direction: Vector3) -> void:
+	if direction.length() > 0.001:
+		look_at(global_position + direction, Vector3.UP)
+		# 根据方向翻转精灵
+		sprite.flip_h = direction.x > 0
 
 # ============================================
 # 私有方法 - 移动与导航
@@ -279,7 +284,7 @@ func _attack_player(player: Node3D) -> void:
 		return
 	
 	_attack_cooldown_timer = attack_cooldown
-	_play_animation("hurt")
+	_play_animation("attack")
 	
 	if physics.has_method("take_damage"):
 		physics.take_damage(attack_damage)
@@ -374,8 +379,16 @@ func _hurt() -> void:
 	_is_invincible = true
 	_invincibility_timer = invincibility_time
 	
-	# 播放受伤动画（闪烁效果）
-	_play_animation("hurt")
+	# 打断当前攻击
+	_attack_cooldown_timer = 0
+	velocity = Vector3.ZERO
+	
+	# 播放受伤动画
+	if sprite.sprite_frames and sprite.sprite_frames.has_animation("hurt"):
+		sprite.play("hurt")
+		print("史莱姆：播放受伤动画")
+	else:
+		print("史莱姆：受伤动画不存在！可用动画:", sprite.sprite_frames.get_animation_names())
 	
 	# 受伤后无敌
 	print("史莱姆进入受伤状态，无敌时间: %.1f秒" % invincibility_time)

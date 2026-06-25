@@ -191,15 +191,24 @@ func _on_attack_hitbox_active() -> void:
 		if collider == self:
 			continue
 		
-		# 尝试获取父节点上的 take_damage 方法（因为碰撞体可能在子节点）
-		var target = collider.get_parent()
-		if not target.has_method("take_damage"):
-			target = collider  # 如果父节点没有，使用碰撞体本身
+		# 查找具有 take_damage 方法的节点（向上遍历父节点）
+		var target = _find_take_damage_node(collider)
 		
-		if target.has_method("take_damage"):
+		if target:
 			# 通知目标受到伤害
 			target.take_damage(attack_damage)
 			print("命中目标: %s，造成 %d 点伤害" % [target.name, attack_damage])
+
+## 向上遍历查找具有 take_damage 方法的节点
+## @param node 起始节点
+## @return 具有 take_damage 方法的节点，未找到返回 null
+func _find_take_damage_node(node: Node) -> Node:
+	var current = node
+	while current:
+		if current.has_method("take_damage"):
+			return current
+		current = current.get_parent()
+	return null
 
 # ============================================
 # 私有方法 - 获取输入
