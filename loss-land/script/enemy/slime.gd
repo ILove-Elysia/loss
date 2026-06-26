@@ -25,8 +25,10 @@ extends CharacterBody3D
 @export var move_speed: float = 1.5
 ## 仇恨范围（米）- 超过此距离会停止追击
 @export var hate_range: float = 8.0
-## 停止距离（米）- 到达此距离停止追击
-@export var stop_distance: float = 1.5
+## 停止距离（米）- 到达此距离停止追击并准备攻击
+@export var stop_distance: float = 1.0
+## 攻击范围（米）- 攻击动画结束时玩家必须在范围内才会受到伤害
+@export var attack_range: float = 1.5
 ## 巡逻范围（米）- 待机时随机移动的范围
 @export var patrol_range: float = 3.0
 ## 受伤后无敌时间（秒）
@@ -74,6 +76,12 @@ var _attack_cooldown_timer: float = 0.0
 var _debug_timer: float = 0.0
 ## 是否面向左侧
 var _facing_left: bool = false
+## 当前攻击目标（用于动画结束后造成伤害）
+var _current_attack_target: Node3D = null
+## 是否正在播放攻击动画
+var _is_attacking: bool = false
+## 待机计时器（用于控制待机时间）
+var _idle_timer: float = 0.0
 
 # ============================================
 # 信号
@@ -180,10 +188,19 @@ func get_max_health() -> int:
 
 ## 处理待机状态
 func _process_idle(delta: float) -> void:
-	# 等待一段时间后开始巡逻
-	await get_tree().create_timer(1.5).timeout
-	_state = "walk"
-	_reset_patrol_target()
+	# 使用计时器代替 await，避免协程问题
+	_idle_timer += delta
+	
+	if _idle_timer >= 1.5:
+		_idle_timer = 0.0
+		_state = "walk"
+		_reset_patrol_target()
+	
+	# 检查玩家是否在仇恨范围内
+	var player = _get_player()
+	if player and _is_player_in_range(hate_range):
+		_state = "chase"
+		_idle_timer = 0.0
 
 ## 处理巡逻状态
 func _process_walk(delta: float) -> void:
@@ -231,17 +248,25 @@ func _process_chase(delta: float) -> void:
 		_reset_patrol_target()
 		return
 	
-	if distance <= stop_distance:
-		# 在攻击距离内 - 面向玩家并攻击
-		_look_at_direction(to_player.normalized())
-		if _attack_cooldown_timer <= 0:
-			_attack_player(player)
-		# 停止移动，等待攻击动画播放
+	# 面向玩家
+	_look_at_direction(to_player.normalized())
+	
+	# 如果正在播放攻击动画，忽略其他逻辑（让动画完整播放）
+	if sprite.animation == "attack":
 		velocity = Vector3.ZERO
 		return
 	
-	# 不在攻击距离内，继续追击（不受冷却影响）
-	_move_towards(player_pos)
+	# 在攻击范围内且冷却结束时攻击（不受停止距离限制）
+	if distance <= attack_range and _attack_cooldown_timer <= 0:
+		_attack_player(player)
+	
+	# 在停止距离内停止移动，否则继续靠近
+	if distance <= stop_distance:
+		velocity = Vector3.ZERO
+		print("追击状态：距离=", distance, "，在停止距离内，停止移动")
+	else:
+		_move_towards(player_pos)
+		print("追击状态：距离=", distance, "，停止距离=", stop_distance, "，正在向玩家移动")
 
 # ============================================
 # 私有方法 - 朝向控制
@@ -283,12 +308,25 @@ func _attack_player(player: Node3D) -> void:
 	if physics.current_health <= 0:
 		return
 	
-	_attack_cooldown_timer = attack_cooldown
-	_play_animation("attack")
+	# 使用统一的距离计算方法
+	var player_pos = _get_player_actual_position()
+	var to_player = player_pos - global_position
+	to_player.y = 0
+	var distance = to_player.length()
 	
-	if physics.has_method("take_damage"):
-		physics.take_damage(attack_damage)
-		print("史莱姆攻击了玩家！造成", attack_damage, "点伤害")
+	print("史莱姆准备攻击！距离=", distance, "，停止距离=", stop_distance, "，攻击范围=", attack_range)
+	
+	_attack_cooldown_timer = attack_cooldown
+	
+	# 保存攻击目标（保存Player节点引用）
+	_current_attack_target = player
+	
+	# 设置攻击状态
+	_is_attacking = true
+	
+	# 播放攻击动画
+	_play_animation("attack")
+	print("史莱姆开始攻击！等待动画结束后检查玩家是否在攻击范围内")
 
 ## 向目标点移动
 func _move_towards(target: Vector3) -> void:
@@ -370,8 +408,14 @@ func _is_player_in_range(range_dist: float) -> bool:
 
 ## 播放动画
 func _play_animation(anim_name: String) -> void:
-	if sprite.sprite_frames and sprite.sprite_frames.has_animation(anim_name):
-		sprite.play(anim_name)
+	if sprite.sprite_frames:
+		if sprite.sprite_frames.has_animation(anim_name):
+			sprite.play(anim_name)
+			print("_play_animation: 播放 ", anim_name)
+		else:
+			print("_play_animation: 动画 ", anim_name, " 不存在！可用动画:", sprite.sprite_frames.get_animation_names())
+	else:
+		print("_play_animation: sprite_frames 为空！")
 
 ## 进入受伤状态
 func _hurt() -> void:
@@ -381,6 +425,7 @@ func _hurt() -> void:
 	
 	# 打断当前攻击
 	_attack_cooldown_timer = 0
+	_current_attack_target = null
 	velocity = Vector3.ZERO
 	
 	# 播放受伤动画
@@ -422,3 +467,52 @@ func _on_animation_finished() -> void:
 		"walk":
 			# 走路动画自然循环，不需要特殊处理
 			pass
+		"attack":
+			# 重置攻击状态
+			_is_attacking = false
+			
+			# 攻击动画结束，检查玩家是否仍在攻击范围内
+			if _current_attack_target:
+				# 使用统一的距离计算方法
+				var player_pos = _get_player_actual_position()
+				var to_player = player_pos - global_position
+				to_player.y = 0
+				var distance = to_player.length()
+				
+				if distance <= attack_range:
+					var physics = _current_attack_target.get_node_or_null("Physics")
+					if physics and physics.has_method("take_damage") and physics.current_health > 0:
+						physics.take_damage(attack_damage)
+						print("史莱姆攻击动画结束！玩家在攻击范围内（距离=", distance, "），造成", attack_damage, "点伤害")
+					else:
+						print("史莱姆攻击动画结束！玩家已死亡")
+				else:
+					print("史莱姆攻击动画结束！玩家已逃离攻击范围（距离=", distance, "，攻击范围=", attack_range, "）")
+				
+				_current_attack_target = null
+			
+			# 攻击动画结束，重新评估状态
+			if _is_player_in_range(hate_range):
+				_state = "chase"
+				_idle_timer = 0.0
+				print("攻击动画结束！玩家在仇恨范围内，切换到追击状态")
+				
+				# 根据距离决定播放什么动画
+				var player_pos = _get_player_actual_position()
+				var to_player = player_pos - global_position
+				to_player.y = 0
+				var distance = to_player.length()
+				
+				if distance <= stop_distance:
+					_play_animation("idle")
+					print("播放 idle 动画（在停止距离内）")
+				else:
+					_play_animation("walk")
+					print("播放 walk 动画（正在追击）")
+			else:
+				_state = "idle"
+				_idle_timer = 0.0
+				_reset_patrol_target()
+				print("攻击动画结束！玩家超出仇恨范围，切换到待机状态")
+				_play_animation("idle")
+				print("播放 idle 动画")

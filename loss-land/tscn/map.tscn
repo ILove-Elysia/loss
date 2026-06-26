@@ -72,3 +72,4 @@ metadata/_custom_type_script = "uid://chxm123"
 
 [node name="Slime" parent="." unique_id=888888881 instance=ExtResource("7_1f6fc")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.8106308, 0, 0)
+attack_range = 2.0
