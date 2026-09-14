@@ -4,9 +4,10 @@
 #
 # 功能说明：
 #   1. 快捷栏（底部中央，9格）- 存放当前使用的物品
-#   2. 状态栏（左下角：电量、生命值、体温）
+#   2. 状态栏（左上角：电量、生命值、体温）
 #   3. 按键提示（底部中央）- 显示操作提示文字
-#   4. 右上角按钮（小地图、菜单）
+#   4. 右上角：小地图（常驻，只有按钮开关，可滚轮缩放/拖动查看）
+#      + 暂停 / 大地图（M）/ 小地图 三个按钮，时钟在小地图下方
 #
 # 连接到其他系统：
 #   - Player: 调用 update_health() / update_power() / update_temperature()
@@ -51,6 +52,7 @@ signal minimap_toggled()
 @export var max_health: int = 100
 @export var current_power: int = 100
 @export var current_temperature: int = 30
+@export var current_hunger: int = 100
 
 # ============================================
 # 私有变量 - 存储节点引用
@@ -59,22 +61,66 @@ signal minimap_toggled()
 ## 快捷栏槽位数组，存储所有 ItemSlotUI 实例
 var _hotbar_slots: Array[ItemSlotUI] = []
 
+## 当前选中的快捷栏槽位索引（-1 表示未选中）
+var _selected_hotbar: int = -1
+
+## 绑定的背包（玩家 Inventory）。快捷栏镜像它的前 hotbar_slots 个槽位。
+## 原先快捷栏只是空壳、永远不显示任何物品——拾取后"不进快捷栏"就是这个原因。
+var _inventory: Inventory = null
+
 ## 状态栏的 Label 节点引用（用于更新显示文本）
 var _health_label: Label
 var _power_label: Label
+## 电量行是否"亮起"（true = 显示真实电量，false = 灰暗占位）。
+## 初值取自角色注册表，运行时由 PlayerVitals._push_hud() → set_power_active() 纠正，
+## 所以不依赖 HUD 与 Vitals 谁先 _ready。
+var _power_row_active: bool = false
+
+## 电量行两种配色：亮起时暖黄（能量感），占位时半透明灰（明确"未启用"）
+const POWER_ROW_ACTIVE_COLOR: Color = Color(1.0, 0.9, 0.45)
+const POWER_ROW_IDLE_COLOR: Color = Color(0.62, 0.62, 0.62, 0.7)
 var _temperature_label: Label
+var _hunger_label: Label
 
 ## 控制提示 Label 节点
 var _hints_label: Label
 
-## 右上角按钮容器
-var _topright_vbox: VBoxContainer
+## 右上角容器（小地图 + 暂停/地图开关按钮 + 下方时钟）
+var _topright: VBoxContainer
+
+## 小地图实例（常驻，默认显示；开关只切它自己的 visible）
+var _minimap: MinimapUI = null
+
+## 小地图的固定占位：关掉地图时它仍然占着同一块尺寸，
+## 否则 HBox 会塌缩，右侧两个按钮会整体左移。
+var _map_slot: Control = null
 
 ## 菜单按钮引用（用于后续功能扩展）
 var _menu_button: Button
 
-## 小地图按钮引用（用于后续功能扩展）
+## 小地图开关按钮引用
 var _minimap_button: Button
+
+## 大地图按钮引用（全屏地图，等同 M 键）
+var _bigmap_button: Button
+
+## 顶部中央时钟 Label（昼夜系统）
+var _clock_label: Label
+
+## 缓存的昼夜节点（"day_night" 组），找不到时每 2 秒重试一次
+var _day_night: Node = null
+
+## 时钟刷新计时器（0.25 秒刷一次文本足够，省掉每帧格式化）
+var _clock_refresh_timer: float = 0.0
+
+## 死亡 UI：屏幕居中底部的「你已死亡」+ 倒计时/复活按钮（仅死亡时可见）
+var _death_panel: VBoxContainer = null
+var _death_label: Label = null
+var _revive_button: Button = null
+
+## 居中底部的轻提示（物品使用被拒等短反馈，平时隐藏）
+var _toast_label: Label = null
+var _toast_timer: float = 0.0
 
 # ============================================
 # 生命周期函数
@@ -82,26 +128,89 @@ var _minimap_button: Button
 
 ## 节点进入场景树时调用，初始化所有UI组件
 func _ready() -> void:
+	# 注册到 "hud" 组，供玩家等系统按组查找。
+	# 不要再用 "/root/Node3D/CanvasLayer/HUDUI" 这类绝对路径——
+	# 场景根节点一改名就全线失效（本文件原先写死 /root/Map/... 导致背包打不开）。
+	add_to_group("hud")
+
+	# HUD 覆盖全屏，必须显式保持 IGNORE，否则会吞掉 3D 世界的鼠标点击。
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 	_setup_ui()
+
+	# 视口尺寸变化（改窗口大小 / 改界面缩放）时把 HUD 根重新贴合视口。
+	# 各面板由 UIManager 显式调 on_viewport_resized；HUD 靠锚点自动跟随，
+	# 但"根控件在视口 size_2d_override 变化时是否自动重排"属于引擎行为，
+	# 加一道保险成本极低：full_anchor() 重设锚点并归零 offset，
+	# 强制按当前视口矩形重算，底栏/右上簇随之归位。
+	get_viewport().size_changed.connect(_fit_to_viewport)
+
+	# 把快捷栏接到玩家的背包上：拾取/合成/使用后快捷栏才实时显示物品。
+	_bind_inventory()
+
+	# 血量上限由所选角色决定（CharacterRegistry → physics.gd._apply_character），
+	# 本文件 @export 的 current_health/max_health 只是占位默认值。
+	# physics 的 _ready 早于 HUD，它那次 update_health 找不到 "hud" 组，
+	# 所以这里必须再主动同步一次，否则赤铁守卫(130)开局会显示成 100/100。
+	_bind_health()
+
+
+## 开局从玩家身上同步一次血量（供上面 _ready 调用）
+func _bind_health() -> void:
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player == null:
+		return
+	var phys: Node = player.get_node_or_null("Physics")
+	if phys == null:
+		return
+	var hp: int = int(phys.get("current_health"))
+	var hp_max: int = int(phys.get("max_health"))
+	if hp_max > 0:
+		update_health(hp, hp_max)
+
+
+## 视口尺寸变化时重新贴合（窗口缩放 / 界面缩放都会触发 size_changed）
+func _fit_to_viewport() -> void:
+	full_anchor()
+	queue_redraw()
+
+
+## 供 UIManager 统一调用（与各面板同一套入口）
+func on_viewport_resized() -> void:
+	_fit_to_viewport()
 
 ## 每帧检测输入，处理快捷键
 ## 按键映射（需在项目设置中配置）：
 ##   - ui_tab: Tab键 -> 切换背包
-##   - toggle_minimap: M键 -> 切换小地图（需自行添加）
 ##   - ui_cancel: Esc键 -> 打开菜单
+##
+## 注意：小地图**没有快捷键**（用户 2026-09-12 约定），只由右上角按钮开关。
+## M 键（大地图）**不在这里**——大地图是 modal（打开即暂停），暂停后 HUD 被冻结
+## 收不到 _input，用 M 关不掉它；所以 M 交给 UIManager._input（process_mode=ALWAYS）。
 func _input(event: InputEvent) -> void:
 	# Tab 切换背包显示/隐藏
 	if event.is_action_pressed("ui_tab"):
 		_toggle_inventory()
 	
-	# M 切换小地图显示/隐藏
-	# 注意：需在项目设置中添加 toggle_minimap 输入映射
-	if event.is_action_pressed("toggle_minimap"):
-		_toggle_minimap()
+	# C 切换合成界面显示/隐藏（大纲 3.4）
+	if event.is_action_pressed("toggle_crafting"):
+		_toggle_crafting()
+		get_viewport().set_input_as_handled()
+
+	# B 切换装备界面显示/隐藏（大纲 3.4 装备系统）
+	if event.is_action_pressed("toggle_equipment"):
+		_toggle_equipment()
+		get_viewport().set_input_as_handled()
 	
-	# ESC 打开游戏菜单
-	if event.is_action_pressed("ui_cancel"):
-		_open_menu()
+	# ESC 不在这里处理：交给 UIManager 统一裁决
+	# （有面板就关栈顶，没有才开暂停菜单），避免多处监听互相打架。
+
+	# 数字键 1-9 选择快捷栏槽位（大纲 5.2）
+	for i in range(9):
+		if event.is_action_pressed("hotbar_%d" % (i + 1)):
+			_select_hotbar(i)
+			get_viewport().set_input_as_handled()
+			break
 
 # ============================================
 # 公共方法 - 供其他系统调用
@@ -117,15 +226,20 @@ func update_health(health: int, max_h: int) -> void:
 	if _health_label:
 		# ♥ 符号表示生命值，格式：♥ 当前值/最大值
 		_health_label.text = "♥ %d/%d" % [health, max_h]
+	# 残血滤镜：当前血量 / 最大血量 <= 阈值时持续红色暗角呼吸。
+	# 与死亡滤镜（apply DEATH）共存：死亡的 _base 优先级更高，这里不会清掉死亡滤镜。
+	var low := false
+	if max_h > 0:
+		low = (float(health) / float(max_h)) <= FilterSystem.LOW_HEALTH_RATIO
+	FilterSystem.set_low_health(low)
 
 ## 更新电量显示
 ## 调用方式：hud.update_power(current)
+## 占位态（无电量）时数值不外露，所以统一交给 _refresh_power_row 决定文字
 ## @param power 当前电量值（0-100）
 func update_power(power: int) -> void:
 	current_power = power
-	if _power_label:
-		# ⚡ 符号表示电量
-		_power_label.text = "⚡ %d" % power
+	_refresh_power_row()
 
 ## 更新体温显示
 ## 调用方式：hud.update_temperature(current)
@@ -135,6 +249,22 @@ func update_temperature(temp: int) -> void:
 	if _temperature_label:
 		# 🌡 符号表示体温
 		_temperature_label.text = "🌡 %d" % temp
+
+## 更新饱食度显示
+## 调用方式：hud.update_hunger(current)
+## @param hunger 当前饱食度（0-100），越低越饿
+func update_hunger(hunger: int) -> void:
+	current_hunger = hunger
+	if _hunger_label:
+		# 🍖 符号表示饱食度
+		_hunger_label.text = "🍖 %d" % hunger
+		# 饥饿时染成橙色、见底时染成红色，不看数字也能察觉该吃东西了
+		if hunger <= 0:
+			_hunger_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.30))
+		elif hunger <= 20:
+			_hunger_label.add_theme_color_override("font_color", Color(1.0, 0.68, 0.35))
+		else:
+			_hunger_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
 
 ## 获取快捷栏槽位
 ## @param index 槽位索引（0-8）
@@ -149,6 +279,7 @@ func refresh_all_status() -> void:
 	update_health(current_health, max_health)
 	update_power(current_power)
 	update_temperature(current_temperature)
+	update_hunger(current_hunger)
 
 # ============================================
 # 私有方法 - UI设置与初始化
@@ -163,14 +294,31 @@ func _setup_ui() -> void:
 	# 2. 创建底部快捷栏
 	_create_hotbar()
 	
-	# 3. 创建左下角状态栏面板
+	# 3. 创建左上角状态栏面板
 	_create_status_panel()
 	
 	# 4. 创建底部中央操作提示
 	_create_control_hints()
 	
-	# 5. 创建右上角按钮（小地图、菜单）
-	_create_topright_buttons()
+	# 5. 右上角：小地图（常驻）+ 暂停/地图开关按钮 + 小地图下方的时钟
+	_create_topright_cluster()
+
+	# 6. 死亡 UI：居中底部的「你已死亡」+ 复活按钮（平时隐藏，玩家死亡才出现）
+	_create_death_ui()
+
+	# 7. 居中底部的轻提示条（物品使用被拒等短反馈，平时隐藏）
+	_create_toast()
+
+## 每帧刷新时钟文本（节流 0.25 秒一次）
+func _process(delta: float) -> void:
+	_clock_refresh_timer -= delta
+	if _clock_refresh_timer <= 0.0:
+		_clock_refresh_timer = 0.25
+		_update_clock()
+	# 推进滤镜/后处理过渡（死亡灰度、受击红闪、残血呼吸等都由 FilterSystem 驱动）
+	FilterSystem.tick(delta)
+	_update_death_ui(delta)
+	_tick_toast(delta)
 
 # ----------------------------------------
 # 全屏锚点设置
@@ -205,32 +353,32 @@ func _create_hotbar() -> void:
 	# CENTER 使得所有子节点水平居中排列
 	hotbar_container.alignment = BoxContainer.ALIGNMENT_CENTER
 	
-	# 设置初始位置：底部，水平居中
-	# position.y = 视口高度 - 100，表示距底部100像素
-	hotbar_container.position = Vector2(0, get_viewport_rect().size.y - 100)
-	
+	# 用锚点定位，不用绝对像素：窗口缩放时自动跟随，不会错位。
+	# PRESET_CENTER_BOTTOM 把锚点设为 (0.5, 1, 0.5, 1)；
+	# 左右锚点重合在中心时，必须 grow_horizontal = BOTH 才会对称向两侧扩展，
+	# 否则容器只向单边生长、看起来"没居中"。
+	hotbar_container.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
+	hotbar_container.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	hotbar_container.offset_top = -100
+	hotbar_container.offset_bottom = -20
+
+	# 栏本身不收鼠标，只有槽位收；否则底部一整条会吞掉 3D 世界的点击。
+	hotbar_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 	# 设置容器最小高度为80像素
 	hotbar_container.custom_minimum_size = Vector2(0, 80)
-	
+
 	# 添加到 HUD 节点下
 	add_child(hotbar_container)
-	
+
 	# 设置 z_index 确保快捷栏显示在其他UI之上
 	hotbar_container.z_index = 100
-	
+
 	# 循环创建所有槽位
 	for i in range(hotbar_slots):
 		var slot = _create_hotbar_slot(i)
 		_hotbar_slots.append(slot)
 		hotbar_container.add_child(slot)
-	
-	# 等待 _ready 执行完毕，计算槽位总宽度并居中
-	await ready
-	# 每个槽位 64x64 像素，槽位间距 8 像素
-	var slot_size = 64
-	var total_width = slot_size * hotbar_slots + 8 * (hotbar_slots - 1)
-	# 居中： (视口宽度 - 总宽度) / 2
-	hotbar_container.position.x = (get_viewport_rect().size.x - total_width) / 2
 
 ## 创建单个快捷栏槽位
 ## @param index 槽位索引（0表示数字键1，8表示数字键9）
@@ -240,30 +388,121 @@ func _create_hotbar_slot(index: int) -> ItemSlotUI:
 	slot.name = "HotbarSlot%d" % index
 	slot.slot_index = index  # 记录索引，用于识别按下了哪个槽位
 	slot.custom_minimum_size = Vector2(64, 64)  # 槽位大小 64x64
+	# 原先没有连这根线，槽位纯装饰，点了毫无反应
+	slot.clicked.connect(_on_hotbar_slot_clicked)
+	# 左键拖拽放下：快捷栏格 = 背包前 9 格，拖拽即调换它们在背包中的位置
+	slot.item_dropped.connect(_on_hotbar_slot_dropped)
 	return slot
+
+# ============================================
+# 快捷栏 ↔ 背包 绑定
+# ============================================
+
+## 查找并绑定玩家背包
+## 快捷栏只镜像背包的前 hotbar_slots 个槽位（0..8）。
+## 玩家节点（"player" 组）在 _ready 时整棵子树已实例化，
+## 直接取它的 Inventory 子节点即可，无需等 player._ready。
+func _bind_inventory() -> void:
+	var player = get_tree().get_first_node_in_group("player")
+	if player and player.has_node("Inventory"):
+		_inventory = player.get_node("Inventory")
+		_connect_inventory_signals()
+		_refresh_hotbar()
+
+## 连接背包信号 → 更新对应快捷栏槽位
+func _connect_inventory_signals() -> void:
+	if _inventory == null:
+		return
+	if not _inventory.item_added.is_connected(_on_inv_item_added):
+		_inventory.item_added.connect(_on_inv_item_added)
+	if not _inventory.item_changed.is_connected(_on_inv_item_changed):
+		_inventory.item_changed.connect(_on_inv_item_changed)
+	if not _inventory.item_removed.is_connected(_on_inv_item_removed):
+		_inventory.item_removed.connect(_on_inv_item_removed)
+	if not _inventory.inventory_cleared.is_connected(_on_inv_cleared):
+		_inventory.inventory_cleared.connect(_on_inv_cleared)
+
+## 重新镜像全部快捷栏槽位（打开背包/初始化时调用）
+func _refresh_hotbar() -> void:
+	if _inventory == null:
+		return
+	for i in range(_hotbar_slots.size()):
+		if i < _inventory.get_slot_count():
+			_hotbar_slots[i].set_item(_inventory.get_item(i))
+		else:
+			_hotbar_slots[i].set_item(null)
+
+## 背包新增物品
+func _on_inv_item_added(_item: ItemInstance, slot: int) -> void:
+	if slot >= 0 and slot < _hotbar_slots.size():
+		_hotbar_slots[slot].set_item(_inventory.get_item(slot))
+
+## 背包某槽位数量/物品变化
+func _on_inv_item_changed(slot: int) -> void:
+	if slot >= 0 and slot < _hotbar_slots.size():
+		_hotbar_slots[slot].set_item(_inventory.get_item(slot))
+
+## 背包移除物品（不确定槽位，整体刷新前 9 格）
+func _on_inv_item_removed(_item_id: StringName, _count: int, _slot: int) -> void:
+	_refresh_hotbar()
+
+## 背包清空
+func _on_inv_cleared() -> void:
+	_refresh_hotbar()
 
 # ----------------------------------------
 # 状态栏面板相关
 # ----------------------------------------
 
+## 本局角色**开局**是否带电量系统（大纲 v0.7 · 2.2.3：仅机器人为 true）。
+## 只用来给电量行一个初值；装上 / 拆下动力核心后的真实状态由 PlayerVitals
+## 通过 set_power_active() 推过来，所以这里读静态注册表就够，不必每帧查询。
+func _has_power_system() -> bool:
+	return CharacterRegistry.has_power(CharacterRegistry.get_active_id())
+
+
+## 电量行「占位 ↔ 亮起」切换。由 PlayerVitals._push_hud() 在状态变化时调用。
+## 装上动力核心（含冒险家 / 魔女）→ true；拆除 → false；机器人恒 true。
+func set_power_active(active: bool) -> void:
+	if _power_row_active == active:
+		return
+	_power_row_active = active
+	_refresh_power_row()
+
+
+## 按当前状态刷新电量行的文字与配色。
+## 亮起 = 真实数值 + 暖黄；占位 = "⚡ --" + 灰。
+## 两种状态都保留这一行的尺寸（Label 始终可见），所以面板高度恒定、不会跳。
+func _refresh_power_row() -> void:
+	if _power_label == null:
+		return
+	if _power_row_active:
+		_power_label.text = "⚡ %d" % current_power
+		_power_label.add_theme_color_override("font_color", POWER_ROW_ACTIVE_COLOR)
+	else:
+		_power_label.text = "⚡ --"
+		_power_label.add_theme_color_override("font_color", POWER_ROW_IDLE_COLOR)
+
+
 ## 创建左下角状态栏面板
-## 显示内容：电量⚡、生命值♥、体温🌡
+## 显示内容：电量⚡（仅机器人）、生命值♥、体温🌡、饱食度🍖
 ## 面板采用半透明黑色背景，圆角设计
 func _create_status_panel() -> void:
 	# 创建面板容器
 	var panel = PanelContainer.new()
 	panel.name = "StatusPanel"
 	
-	# 设置面板位置（左上角）
-	# offset_left/top = 距左/上边缘的距离
-	# offset_right/bottom = 距右/下边缘的距离（正值表示向内缩）
-	panel.anchor_top = 0
-	panel.anchor_bottom = 0
+	# 左上角（界面草图：状态栏在左上、小地图在右上）。
+	# PRESET_TOP_LEFT 把锚点设为 (0, 0, 0, 0)，offset 直接向下量。
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
 	panel.offset_left = 20
-	panel.offset_top = 20
-	panel.offset_right = 140  # 面板宽度 = 140 - 20 = 120
-	panel.offset_bottom = 140 # 面板高度 = 140 - 20 = 120
-	
+	panel.offset_right = 150   # 面板宽度 130
+	panel.offset_top = 20      # 距顶部 20px
+	panel.offset_bottom = 152  # 固定 4 行（电量行常驻占位，谁都不会少一行）
+
+	# 面板只是显示，不参与点击，否则左下角一片区域会挡住 3D 操作
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 	panel.z_index = 100  # 确保在最上层
 	
 	# 创建半透明黑色背景样式
@@ -280,11 +519,21 @@ func _create_status_panel() -> void:
 	vbox.add_theme_constant_override("separation", 8)  # 标签间距8像素
 	panel.add_child(vbox)
 	
-	# ----- 电量标签 -----
+	# ----- 电量标签（常驻占位）-----
+	# 大纲 v0.7 · 2.2.3：电量默认只有机器人有，其余角色可装入「动力核心」解锁。
+	# 这里**不做增删行**，而是让这一行**永远占着位置**，只切换内容与配色：
+	#   内置电量（机器人）→ 常驻显示，不可关闭
+	#   外置电量（装有动力核心）→ 亮起显示
+	#   无电量 → 灰暗占位 "⚡ --"
+	# 为什么用占位而不是 visible=false：隐藏的控件会被 VBoxContainer 完全忽略尺寸，
+	# 面板会跟着变矮；而装上核心时面板又要长高 —— 一行位置忽有忽无更难看，
+	# 且面板高度写死在 offset 上（见下方 offset_bottom），行数变化还会溢出。
+	# 占位就让高度恒定，运行时只改文字和颜色，零布局风险。
 	_power_label = Label.new()
-	_power_label.text = "⚡ %d" % current_power
 	_power_label.add_theme_font_size_override("font_size", 18)  # 字体大小18
 	vbox.add_child(_power_label)
+	_power_row_active = _has_power_system()
+	_refresh_power_row()
 	
 	# ----- 生命值标签 -----
 	_health_label = Label.new()
@@ -298,31 +547,37 @@ func _create_status_panel() -> void:
 	_temperature_label.add_theme_font_size_override("font_size", 18)
 	vbox.add_child(_temperature_label)
 
+	# ----- 饱食度标签 -----
+	_hunger_label = Label.new()
+	_hunger_label.text = "🍖 %d" % current_hunger
+	_hunger_label.add_theme_font_size_override("font_size", 18)
+	vbox.add_child(_hunger_label)
+
 # ----------------------------------------
 # 操作提示相关
 # ----------------------------------------
 
 ## 创建底部中央的操作提示文字
-## 显示格式：[E] 互动  [F] 攻击  [Tab] 背包
+## 显示格式：[空格] 互动  [F] 攻击  [Tab] 背包  [M] 地图
 func _create_control_hints() -> void:
 	_hints_label = Label.new()
 	_hints_label.name = "ControlHints"
-	_hints_label.text = "[E] 互动  [F] 攻击  [Tab] 背包"
+	_hints_label.text = "[空格] 互动  [F] 攻击  [Tab] 背包  [M] 地图"
 	
-	# 锚点设置：水平居中，垂直靠上（状态栏下方）
-	_hints_label.anchor_left = 0.5   # 左锚点位于视口50%处
-	_hints_label.anchor_right = 0.5   # 右锚点位于视口50%处
-	_hints_label.anchor_top = 0.0     # 上锚点位于视口0%处（顶部）
-	_hints_label.anchor_bottom = 0.0  # 下锚点位于视口0%处（顶部）
-	
-	# offset 调整相对锚点的位置（距顶部140像素，避开状态栏）
-	_hints_label.offset_top = 0     # 距顶部0像素
-	_hints_label.offset_bottom = 0  # 高度0像素
-	
+	# 底部居中、紧贴快捷栏上方（大纲 5.1 要求）。
+	# 原先 anchor 全 0 且 offset 全 0，实际贴在屏幕最顶端，还和右上按钮抢位置。
+	# 快捷栏占距底 20~100px，这里放在 110~140px，正好在其上方。
+	_hints_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
+	_hints_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hints_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_hints_label.offset_top = -140
+	_hints_label.offset_bottom = -110
+
 	# 对齐方式：水平和垂直都居中
 	_hints_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hints_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	
+
+	_hints_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hints_label.z_index = 100
 	add_child(_hints_label)
 
@@ -333,50 +588,256 @@ func update_control_hints(hints: String) -> void:
 		_hints_label.text = hints
 
 # ----------------------------------------
+# 昼夜时钟相关
+# ----------------------------------------
+
+## 从昼夜节点读取时间并刷新时钟文本
+## 昼夜节点按 "day_night" 组查找（HUD 先于/后于它 ready 都能自愈）
+func _update_clock() -> void:
+	if _day_night == null or not is_instance_valid(_day_night):
+		_day_night = get_tree().get_first_node_in_group("day_night")
+		if _day_night == null or _clock_label == null:
+			return
+	if _clock_label == null:
+		return
+	var icon := "🌙" if _day_night.is_night() else "☀"
+	_clock_label.text = "第 %d 天  %02d:%02d  %s" % [
+		_day_night.day,
+		int(_day_night.hour),
+		int(fmod(_day_night.hour, 1.0) * 60.0),
+		icon,
+	]
+
+# ----------------------------------------
 # 右上角按钮相关
 # ----------------------------------------
 
-## 创建右上角按钮容器（小地图、菜单）
-func _create_topright_buttons() -> void:
-	# 创建垂直布局容器，按钮从上到下排列
-	_topright_vbox = VBoxContainer.new()
-	_topright_vbox.name = "TopRightButtons"
-	_topright_vbox.alignment = BoxContainer.ALIGNMENT_END  # 右对齐
-	
-	# 锚点：右上角
-	_topright_vbox.anchor_left = 1.0
-	_topright_vbox.anchor_right = 1.0
-	_topright_vbox.anchor_top = 0.0
-	_topright_vbox.anchor_bottom = 0.0
-	
-	# offset 调整位置（负值表示向左/向下）
-	_topright_vbox.offset_left = -110  # 距右边缘110像素
-	_topright_vbox.offset_top = 20
-	_topright_vbox.offset_right = -20  # 距右边缘20像素
-	_topright_vbox.offset_bottom = 100
-	
-	_topright_vbox.z_index = 100
-	add_child(_topright_vbox)
-	
-	# 创建小地图按钮
-	_minimap_button = _create_button("[M] 小地图")
-	_minimap_button.pressed.connect(_on_minimap_button_pressed)  # 连接信号
-	_topright_vbox.add_child(_minimap_button)
-	
-	# 创建菜单按钮
-	_menu_button = _create_button("[Esc] 菜单")
-	_menu_button.pressed.connect(_on_menu_button_pressed)  # 连接信号
-	_topright_vbox.add_child(_menu_button)
+## 右上角：小地图（常驻）+ 右侧按钮列（暂停、小地图开关）+ 小地图下方时钟
+##
+## 布局（界面草图）：
+##   [状态栏]                 [小地图] [暂停]
+##                            [小地图] [小地图开关]
+##                            [ 时间 ]
+## 整簇锚在右上角：锚点全设 1/0，用负的 offset 从右边缘往左量出簇的宽度，
+## 这样窗口缩放时它始终贴着右上角，不会像"锚点+固定像素坐标"那样跑偏。
+func _create_topright_cluster() -> void:
+	var map_w := MinimapUI.panel_width()
+	var map_h := MinimapUI.panel_height()
+	var btn_w := 100.0
+	var sep := 8.0
+	var margin := 20.0
+	var clock_h := 26.0
+	var cluster_w := map_w + sep + btn_w
+
+	_topright = VBoxContainer.new()
+	_topright.name = "TopRightCluster"
+	_topright.anchor_left = 1.0
+	_topright.anchor_right = 1.0
+	_topright.anchor_top = 0.0
+	_topright.anchor_bottom = 0.0
+	_topright.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_topright.grow_vertical = Control.GROW_DIRECTION_END
+	_topright.offset_left = -(cluster_w + margin)
+	_topright.offset_right = -margin
+	_topright.offset_top = margin
+	_topright.offset_bottom = margin + map_h + sep + clock_h
+	_topright.add_theme_constant_override("separation", int(sep))
+	# 容器本身不收鼠标：空白处照样能点到 3D 世界，只有按钮自己收点击
+	_topright.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_topright.z_index = 100
+	add_child(_topright)
+
+	# --- 第一行：小地图 + 右侧按钮列 ---
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(sep))
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_topright.add_child(row)
+
+	# 固定占位：小地图隐藏时它仍占同样尺寸，按钮不会左右跳
+	_map_slot = Control.new()
+	_map_slot.name = "MapSlot"
+	_map_slot.custom_minimum_size = Vector2(map_w, map_h)
+	row.add_child(_map_slot)
+
+	_minimap = MinimapUI.new()
+	_minimap.name = "Minimap"
+	_map_slot.add_child(_minimap)
+
+	var btns := VBoxContainer.new()
+	btns.add_theme_constant_override("separation", 6)
+	btns.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(btns)
+
+	_menu_button = _create_button("暂停", btn_w)
+	_menu_button.pressed.connect(_on_menu_button_pressed)
+	btns.add_child(_menu_button)
+
+	_bigmap_button = _create_button("大地图", btn_w)
+	_bigmap_button.pressed.connect(_on_bigmap_button_pressed)
+	btns.add_child(_bigmap_button)
+
+	_minimap_button = _create_button("小地图", btn_w)
+	_minimap_button.pressed.connect(_on_minimap_button_pressed)
+	btns.add_child(_minimap_button)
+
+	# --- 第二行：时钟（贴在小地图正下方）---
+	_clock_label = Label.new()
+	_clock_label.name = "DayClock"
+	_clock_label.text = ""
+	_clock_label.custom_minimum_size = Vector2(map_w, clock_h)
+	_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# 白字黑描边，亮暗天色下都看得清
+	_clock_label.add_theme_font_size_override("font_size", 16)
+	_clock_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	_clock_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	_clock_label.add_theme_constant_override("outline_size", 4)
+	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_topright.add_child(_clock_label)
+
+	_update_minimap_button_text()
 
 ## 创建通用按钮
 ## @param text 按钮显示文字
+## @param width 按钮最小宽度
 ## @return 创建的 Button 实例
-func _create_button(text: String) -> Button:
+func _create_button(text: String, width: float = 90.0) -> Button:
 	var btn = Button.new()
 	btn.text = text
-	btn.custom_minimum_size = Vector2(90, 32)  # 最小尺寸 90x32
+	btn.custom_minimum_size = Vector2(width, 32)  # 最小尺寸 宽x32
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT   # 文字左对齐
+	# 关键：HUD 按钮绝不参与键盘聚焦。
+	# Button 默认 focus_mode = FOCUS_ALL，而窗口一获得焦点 Godot 就会自动聚焦
+	# 树里第一个可聚焦控件（正好是这个小地图按钮）。被聚焦的按钮会把空格/回车
+	# （内置 ui_accept）当成"点击"——于是按空格采集时会顺带打开小地图。
+	# 设为 FOCUS_NONE 只影响键盘导航，鼠标点击照常生效。
+	btn.focus_mode = Control.FOCUS_NONE
 	return btn
+
+# ----------------------------------------
+# 死亡 / 复活 UI 相关
+# ----------------------------------------
+
+## 创建死亡 UI：屏幕居中底部、平时隐藏，玩家死亡后出现 5 秒倒计时 + 复活按钮。
+## 倒计时未到时按钮显示「复活 (N)」且禁用；到 0 才可点，点了回重生点满状态。
+## 设计约定（用户 2026-09-13）：按钮只在玩家死亡后可见，5 秒后才可点击。
+func _create_death_ui() -> void:
+	_death_panel = VBoxContainer.new()
+	_death_panel.name = "DeathPanel"
+	_death_panel.alignment = BoxContainer.ALIGNMENT_CENTER
+	# 居中底部，放在快捷栏/操作提示之上（提示占用 -140~-110，这里 -200~-110）
+	_death_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
+	_death_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_death_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_death_panel.offset_top = -240
+	_death_panel.offset_bottom = -150
+	# 容器不收鼠标（空白区域照样能点 3D），只有按钮自己收点击
+	_death_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_death_panel.visible = false
+	_death_panel.z_index = 200
+	add_child(_death_panel)
+
+	_death_label = Label.new()
+	_death_label.name = "DeathLabel"
+	_death_label.text = "你已死亡"
+	_death_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_death_label.add_theme_font_size_override("font_size", 24)
+	_death_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
+	_death_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_death_label.add_theme_constant_override("outline_size", 4)
+	_death_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_death_label.custom_minimum_size = Vector2(0, 30)
+	_death_panel.add_child(_death_label)
+
+	_revive_button = Button.new()
+	_revive_button.name = "ReviveButton"
+	_revive_button.text = "复活"
+	_revive_button.custom_minimum_size = Vector2(220, 52)
+	_revive_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# HUD 按钮统一不抢键盘焦点（同 _create_button 的说明）
+	_revive_button.focus_mode = Control.FOCUS_NONE
+	_revive_button.disabled = true
+	_revive_button.pressed.connect(_on_revive_pressed)
+	_death_panel.add_child(_revive_button)
+
+## 每帧同步死亡 UI：死亡态才显示，倒计时归零后按钮才可点。
+func _update_death_ui(delta: float) -> void:
+	if _death_panel == null:
+		return
+	if not RespawnSystem.dead:
+		if _death_panel.visible:
+			_death_panel.visible = false
+		return
+	_death_panel.visible = true
+	RespawnSystem.tick(delta)
+	if RespawnSystem.can_revive():
+		_revive_button.disabled = false
+		_revive_button.text = "复活"
+	else:
+		_revive_button.disabled = true
+		_revive_button.text = "复活 (%d)" % int(ceil(RespawnSystem.countdown))
+
+## 点「复活」：仅在倒计时结束后有效；把玩家传送回重生点并恢复满状态。
+func _on_revive_pressed() -> void:
+	if not RespawnSystem.can_revive():
+		return
+	var player = get_tree().get_first_node_in_group("player")
+	if player == null:
+		return
+	var phys = player.get_node_or_null("Physics")
+	if phys != null and phys.has_method("revive"):
+		phys.call("revive")
+	_death_panel.visible = false
+
+# ----------------------------------------
+# 轻提示条（Toast）
+#
+# 用途：物品使用被拒等原因的短反馈。项目里原本没有通用提示组件，
+# 而"右键了却什么都没发生"对玩家等同于 bug，所以补一个最小的。
+# 位置沿用死亡 UI 那套已验证的锚点写法：CENTER_BOTTOM + 显式 offset
+#（偏移量算清楚，不依赖 _ready 时的尺寸），放在死亡面板更下方，两者不重叠。
+# ----------------------------------------
+
+## 创建轻提示 Label（平时隐藏）
+func _create_toast() -> void:
+	_toast_label = Label.new()
+	_toast_label.name = "ToastLabel"
+	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast_label.add_theme_font_size_override("font_size", 16)
+	_toast_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.4))
+	_toast_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_toast_label.add_theme_constant_override("outline_size", 4)
+	_toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast_label.custom_minimum_size = Vector2(0, 26)
+
+	_toast_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
+	_toast_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_toast_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_toast_label.offset_top = -118
+	_toast_label.offset_bottom = -92
+
+	_toast_label.z_index = 150
+	_toast_label.visible = false
+	add_child(_toast_label)
+
+
+## 显示一条轻提示（默认 2 秒后自动消失）
+func show_toast(text: String, duration: float = 2.0) -> void:
+	if _toast_label == null:
+		return
+	_toast_label.text = text
+	_toast_label.visible = true
+	_toast_timer = duration
+
+
+## 每帧推进提示的倒计时
+func _tick_toast(delta: float) -> void:
+	if _toast_label == null or not _toast_label.visible:
+		return
+	_toast_timer -= delta
+	if _toast_timer <= 0.0:
+		_toast_label.visible = false
+
 
 # ----------------------------------------
 # 按钮信号回调
@@ -386,6 +847,10 @@ func _create_button(text: String) -> Button:
 func _on_minimap_button_pressed() -> void:
 	_toggle_minimap()
 
+## 大地图按钮被按下时的回调
+func _on_bigmap_button_pressed() -> void:
+	_toggle_big_map()
+
 ## 菜单按钮被按下时的回调
 func _on_menu_button_pressed() -> void:
 	_open_menu()
@@ -394,41 +859,122 @@ func _on_menu_button_pressed() -> void:
 # 私有方法 - 交互逻辑
 # ============================================
 
+## 选中某个快捷栏槽位：高亮它并对外发信号
+## @param index 槽位索引（0-8）
+func _select_hotbar(index: int) -> void:
+	if index < 0 or index >= _hotbar_slots.size():
+		return
+	# 取消旧高亮
+	if _selected_hotbar >= 0 and _selected_hotbar < _hotbar_slots.size():
+		_hotbar_slots[_selected_hotbar].set_selected(false)
+	_selected_hotbar = index
+	_hotbar_slots[index].set_selected(true)
+	hotbar_slot_pressed.emit(index)
+
+## 快捷栏槽位被鼠标点击的回调（由 ItemSlotUI.clicked 触发）
+##   左键：选中（高亮，供数字键逻辑一致）
+##   右键：直接使用该格中"可用"的物品（电池→回电等），完成快捷栏快速使用闭环
+func _on_hotbar_slot_clicked(slot_index: int, button: int) -> void:
+	if button == MOUSE_BUTTON_RIGHT:
+		_use_hotbar_item(slot_index)
+	else:
+		_select_hotbar(slot_index)
+
+## 快捷栏槽位拖拽放下回调
+## 快捷栏格与背包前 9 格是同一批数据；直接调 Inventory.move_item，
+## 背包的信号会回头刷新快捷栏，无需手动同步。
+func _on_hotbar_slot_dropped(from_slot: int, to_slot: int) -> void:
+	if _inventory == null or from_slot == to_slot:
+		return
+	_inventory.move_item(from_slot, to_slot)
+
+## 使用快捷栏指定槽位的物品
+## 与 InventoryUI.use_item 同源：经 ItemEffects 施加 use_effect，成功则按 consume_on_use 扣 1。
+func _use_hotbar_item(slot_index: int) -> void:
+	if _inventory == null:
+		return
+	var item = _inventory.get_item(slot_index)
+	if item == null or item.data == null:
+		return
+
+	# 建筑类物品：右键 = 进入放置模式（和背包里一致）
+	if BuildingSystem.is_building(item.data.item_id):
+		_try_place_building(item.data.item_id)
+		return
+
+	# can_use 同时要求 usable 且 use_effect 非空，避免"可点但无效果"的假提示
+	if not ItemEffects.can_use(item.data):
+		return
+
+	# 专属物品的使用权限（黑名单 / 白名单）：不满足时明确说明原因。
+	# 没有这条反馈的话右键毫无反应，玩家只会当成 bug。
+	var denied: String = ItemEffects.access_denied_reason(item.data)
+	if not denied.is_empty():
+		show_toast(denied)
+
+	var player := get_tree().get_first_node_in_group("player")
+	var applied := ItemEffects.apply(item.data, player)
+	if applied:
+		if item.data.consume_on_use:
+			item.remove(1)
+			if item.is_empty():
+				_inventory.clear_slot(slot_index)
+			else:
+				_inventory.set_slot(slot_index, item)
+
+## 进入建筑放置模式（与 InventoryUI._try_place_building 同逻辑，
+## 这里不需要关面板——HUD 快捷栏本来就只占屏幕底部一小条）
+func _try_place_building(item_id: StringName) -> void:
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null:
+		return
+	var placer := player.get_node_or_null("BuildPlacer")
+	if placer != null and placer.has_method("start_placement"):
+		placer.call("start_placement", item_id)
+
+
 ## 切换背包显示/隐藏
 ## 通过查找 InventoryUI 节点并调用其 toggle() 方法
 func _toggle_inventory() -> void:
-	# 尝试获取背包UI节点（路径取决于你的场景结构）
-	var inventory_ui = get_node_or_null("/root/Map/CanvasLayer/InventoryUI")
-	if inventory_ui:
-		inventory_ui.toggle()
-		# 发射信号供其他系统监听
-		emit_signal("inventory_toggled", inventory_ui.visible)
-	else:
-		push_warning("HUD: 找不到 InventoryUI 节点，请检查路径是否正确")
+	# 交给 UIManager 统一托管：面板的创建、显隐、Esc 层级都在那里。
+	# 这里不再自己找节点——原先写死 /root/Map/... 导致 Tab 完全没反应。
+	UIManager.toggle_inventory()
+	emit_signal("inventory_toggled", UIManager.is_open(UIManager.INVENTORY_PANEL))
 
 ## 切换小地图显示/隐藏
-## TODO: 需要实现小地图功能
+## 常驻组件：只切 visible，不走 UIManager 面板栈（Esc 关面板时不会误关它）
+## 注意：小地图只有这一个入口（按钮），不再绑快捷键——M 键归大地图。
 func _toggle_minimap() -> void:
+	if _minimap == null:
+		return
+	_minimap.visible = not _minimap.visible
+	_update_minimap_button_text()
 	emit_signal("minimap_toggled")
-	# -----------------------
-	# TODO: 实现小地图切换逻辑
-	# 示例：
-	# if minimap.visible:
-	#     minimap.hide()
-	# else:
-	#     minimap.show()
-	# -----------------------
 
-## 打开游戏菜单
-## TODO: 需要实现菜单功能
+## 打开/关闭全屏大地图（M 键 / "大地图"按钮）
+## 交给 UIManager 托管：面板的创建、Esc 层级、显隐都在那里
+func _toggle_big_map() -> void:
+	UIManager.toggle_panel(UIManager.BIGMAP_PANEL)
+
+## 让按钮文字反映当前状态，否则"点了一下没反应"看起来像坏了
+func _update_minimap_button_text() -> void:
+	if _minimap_button == null or _minimap == null:
+		return
+	_minimap_button.text = "小地图 开" if _minimap.visible else "小地图 关"
+
+## 切换合成界面显示/隐藏（C 键，面板由 UIManager 托管）
+func _toggle_crafting() -> void:
+	UIManager.toggle_crafting()
+
+
+## 切换装备界面显示/隐藏（B 键，面板由 UIManager 托管）
+func _toggle_equipment() -> void:
+	UIManager.toggle_equipment()
+
+## 打开游戏菜单（暂停菜单会暂停游戏，由 UIManager 负责）
 func _open_menu() -> void:
+	UIManager.open_panel(UIManager.PAUSE_PANEL)
 	emit_signal("menu_requested")
-	# -----------------------
-	# TODO: 实现菜单打开逻辑
-	# 示例：
-	# get_tree().paused = true
-	# menu_panel.show()
-	# -----------------------
 
 # ============================================
 # 工具方法
@@ -437,6 +983,8 @@ func _open_menu() -> void:
 ## 打印当前HUD状态（调试用）
 ## 可在开发时调用查看各状态值
 func debug_print_status() -> void:
+	if not DebugConfig.is_enabled(DebugConfig.CAT_UI):
+		return
 	print("========== HUD Status ==========")
 	print("Health: %d/%d" % [current_health, max_health])
 	print("Power: %d" % current_power)

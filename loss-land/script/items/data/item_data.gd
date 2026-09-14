@@ -24,13 +24,18 @@ extends Resource
 # 物品类型枚举
 # 定义物品的大类，用于背包分类和UI显示
 # ----------------------------------------
+# 注意：只能往末尾追加新类型，禁止在中间插入——
+# .tres 里保存的是数字（item_type = 3），重排会让已有物品类型错乱。
 enum ItemType {
 	RESOURCE,    # 资源类（草、木头、石头等）
 	TOOL,        # 工具类（斧头、镐、铲子等）
 	FOOD,        # 食物类（浆果、肉等）
-	MATERIAL,    # 材料类（布料、金属等）
+	MATERIAL,    # 材料类（木棍、布料、金属等）
 	QUEST,       # 任务物品
-	MISC         # 杂项
+	MISC,        # 杂项
+	WEAPON,      # 武器类（木剑、石剑等）
+	ARMOR,       # 护甲类（草甲、木甲等）
+	BUILDING     # 建筑类（工作台、熔炉、储物箱等）
 }
 
 # ----------------------------------------
@@ -43,6 +48,47 @@ enum Rarity {
 	RARE,        # 稀有（蓝色）
 	EPIC,        # 史诗（紫色）
 	LEGENDARY    # 传说（橙色）
+}
+
+# ----------------------------------------
+# 装备槽位枚举
+# 决定这件物品能装到哪个槽位；NONE 表示不可装备
+#
+# 注意：只能往末尾追加，禁止在中间插入——
+# .tres 里存的是数字，重排会让已有装备错位。
+# ----------------------------------------
+enum EquipSlot {
+	NONE,        # 不可装备（草、木材、电池等）
+	WEAPON,      # 武器槽（剑）——加攻击力
+	ARMOR,       # 护甲槽（衣服）——加防御
+	TOOL         # 工具槽（斧、镐）——加采集速度
+}
+
+# 工具类型：与 ResourceData.HarvestTool 的数值保持一致
+# 0=NONE 1=AXE 2=PICKAXE 3=SHOVEL 4=KNIFE
+# 只有工具类型与资源匹配时，采集速度加成才生效
+enum ToolType {
+	NONE = 0,
+	AXE = 1,
+	PICKAXE = 2,
+	SHOVEL = 3,
+	KNIFE = 4
+}
+
+# ----------------------------------------
+# 专属物品的使用权限策略（大纲 v0.7 · 2.2.4-④ 决策 ⑦）
+#
+# 为什么需要它：专属物品**可能生成在宝箱里被别的角色捡到**。
+# 如果什么都不做，玩家会"捡到一件好东西却用不了"；如果全放开，"专属"就没意义了。
+# 所以权限只卡在**能不能用**这一层，拾取 / 携带一律放开（大纲的取舍理由）。
+#
+# 三档策略，覆盖"黑名单"（OWNER_ONLY）与"白名单加成"（OWNER_BONUS）两种诉求。
+# 注意：只能往末尾追加，禁止在中间插入——.tres 里存的是数字。
+# ----------------------------------------
+enum AccessPolicy {
+	ANYONE,        # 谁都能用（通用物品；不填 exclusive_owner 时也是这一档）
+	OWNER_BONUS,   # 谁都能用，但**只有归属角色享受专属加成**（白名单）
+	OWNER_ONLY,    # **只有归属角色能用**，其他角色被拒（黑名单）
 }
 
 # ============================================
@@ -111,6 +157,55 @@ enum Rarity {
 @export var consume_on_use: bool = true
 
 # ============================================
+# 专属权限（大纲 v0.7 · 2.2.4-④ 决策 ⑦）
+#
+# 三档策略见 AccessPolicy 枚举的注释。归属角色填 CharacterRegistry 的 id
+# （如 &"adventurer" / &"witch" / &"robot"）。
+# 判定统一走本类的 is_usable_by() / has_owner_bonus_for()，
+# 由 ItemEffects.access_denied_reason() 与 apply() 执行，
+# UI 侧（背包 / 快捷栏 / 悬停说明）只负责把拒绝原因展示出来。
+# ============================================
+@export_group("专属权限", "")
+
+# 归属角色 id。**空 = 通用物品**，此时三档策略里只有 ANYONE 有意义。
+@export var exclusive_owner: StringName = &""
+
+# 使用权限策略（黑名单 / 白名单加成 / 通用）
+@export var access_policy: AccessPolicy = AccessPolicy.ANYONE
+
+# 归属角色使用时的**效果倍率**（仅 OWNER_BONUS 生效；1.0 = 无加成）。
+# 用倍率而不是"第二套数值"，是为了让 .tres 里只维护一份 use_effect。
+@export var owner_bonus_mult: float = 1.0
+
+# ============================================
+# 装备配置
+#
+# 只有 equip_slot != NONE 的物品才能装到玩家身上。
+# 数值由 PlayerEquipment 汇总后，交给战斗/采集系统消费：
+#   attack_bonus         → Physics 的最终攻击力
+#   defense_bonus        → Physics.take_damage 的减伤
+#   harvest_speed_bonus  → ResourceEntity 的采集耗时（仅工具类型匹配时）
+# ============================================
+@export_group("装备", "")
+
+# 可装备的槽位，NONE 表示这件物品不能装备
+@export var equip_slot: EquipSlot = EquipSlot.NONE
+
+# 攻击力加成（武器槽生效，直接加到玩家基础攻击力上）
+@export var attack_bonus: int = 0
+
+# 防御力加成（护甲槽生效，每次受伤减少的伤害值，至少仍会掉 1 点）
+@export var defense_bonus: int = 0
+
+# 采集速度加成倍率（工具槽生效）
+# 0.5 = 采集耗时缩短到 1/1.5，1.0 = 缩短到 1/2
+@export var harvest_speed_bonus: float = 0.0
+
+# 工具类型，决定对哪种资源生效
+# 须与 ResourceData.required_tool 的数值一致
+@export var tool_type: ToolType = ToolType.NONE
+
+# ============================================
 # 价值配置
 # ============================================
 @export_group("价值", "")
@@ -150,7 +245,91 @@ func get_type_name() -> String:
 		ItemType.MATERIAL:  return "材料"
 		ItemType.QUEST:     return "任务物品"
 		ItemType.MISC:      return "杂项"
+		ItemType.WEAPON:    return "武器"
+		ItemType.ARMOR:     return "护甲"
+		ItemType.BUILDING:  return "建筑"
 		_:                  return "未知"
+
+# ----------------------------------------
+# 获取装备槽位名称函数
+# ----------------------------------------
+func get_equip_slot_name() -> String:
+	match equip_slot:
+		EquipSlot.WEAPON: return "武器槽"
+		EquipSlot.ARMOR:  return "护甲槽"
+		EquipSlot.TOOL:   return "工具槽"
+		_:                return "不可装备"
+
+# ----------------------------------------
+# 获取工具类型名称函数
+# 用于拼采集速度的描述文本
+# ----------------------------------------
+func get_tool_type_name() -> String:
+	match tool_type:
+		ToolType.AXE:     return "木材"
+		ToolType.PICKAXE: return "矿物"
+		ToolType.SHOVEL:  return "挖掘"
+		ToolType.KNIFE:   return "切割"
+		_:                return ""
+
+# ----------------------------------------
+# 是否可装备函数
+# ----------------------------------------
+func is_equippable() -> bool:
+	return equip_slot != EquipSlot.NONE
+
+# ----------------------------------------
+# 专属权限判定（决策 ⑦）
+#
+# owner_id 留空 = 用"当前正在游玩的角色"（CharacterRegistry.get_active_id()）。
+# 这样调用方（UI / 效果服务）不必自己到处取角色 id。
+# ----------------------------------------
+
+# 是否设了归属角色（空 = 通用物品）
+func has_exclusive_owner() -> bool:
+	return not str(exclusive_owner).is_empty()
+
+# 某角色能否使用本物品。
+# OWNER_ONLY = 黑名单（只有归属者能用）；其余两档一律放行。
+func is_usable_by(owner_id: String = "") -> bool:
+	if access_policy != AccessPolicy.OWNER_ONLY:
+		return true
+	if not has_exclusive_owner():
+		return true
+	return _matches_owner(owner_id)
+
+# 某角色使用本物品时是否享受专属加成（OWNER_BONUS = 白名单加成）
+func has_owner_bonus_for(owner_id: String = "") -> bool:
+	if access_policy != AccessPolicy.OWNER_BONUS:
+		return false
+	if owner_bonus_mult <= 0.0:
+		return false
+	return _matches_owner(owner_id)
+
+# 归属角色的显示名（拼提示文案用）；没有归属时返回空串
+func get_owner_display_name() -> String:
+	if not has_exclusive_owner():
+		return ""
+	var defn := CharacterRegistry.get_character(str(exclusive_owner))
+	return String(defn.get("name", ""))
+
+# 给玩家看的一句话说明；"能用且无加成"的情况返回空串（不需要提示）
+func get_access_hint() -> String:
+	var owner_name := get_owner_display_name()
+	if is_usable_by(""):
+		if has_owner_bonus_for(""):
+			return "专属加成生效（%s）" % owner_name
+		return ""
+	if owner_name.is_empty():
+		return "此物品无法使用"
+	return "只有「%s」能使用" % owner_name
+
+# 内部：某角色是否就是归属角色
+func _matches_owner(owner_id: String) -> bool:
+	var id: String = owner_id
+	if id.is_empty():
+		id = CharacterRegistry.get_active_id()
+	return id == str(exclusive_owner)
 
 # ----------------------------------------
 # 获取完整描述函数
@@ -159,6 +338,25 @@ func get_type_name() -> String:
 func get_full_description() -> String:
 	var text = "[color=%s]%s[/color]\n" % [get_rarity_color().to_html(), display_name]
 	text += "[i]类型: %s[/i]\n" % get_type_name()
+
+	# 可装备物品：把生效的数值列出来，玩家不用猜
+	if equip_slot != EquipSlot.NONE:
+		text += "\n[b]装备效果[/b]（%s）\n" % get_equip_slot_name()
+		if attack_bonus != 0:
+			text += "  攻击力 +%d\n" % attack_bonus
+		if defense_bonus != 0:
+			text += "  防御 +%d\n" % defense_bonus
+		if harvest_speed_bonus > 0.0:
+			text += "  %s采集速度 +%d%%\n" % [
+				get_tool_type_name(), int(harvest_speed_bonus * 100.0)]
+
+	# 专属权限说明（决策 ⑦）：被拒 → 红字；能用且有专属加成 → 绿字；
+	# 普通物品（能用、无加成）不加任何行，避免说明里全是废话。
+	var access_hint := get_access_hint()
+	if not access_hint.is_empty():
+		var col: String = "#8fd18f" if is_usable_by("") else "#ff8a80"
+		text += "\n[color=%s]%s[/color]" % [col, access_hint]
+
 	if not description.is_empty():
 		text += "\n" + description
 	return text

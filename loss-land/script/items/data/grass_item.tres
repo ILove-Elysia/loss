@@ -1,13 +1,15 @@
 [gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://cdb87lhr1e601"]
 
 [ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_0jrkm"]
+[ext_resource type="Texture2D" path="res://art/icons/grass.png" id="2_grasic"]
 
 [resource]
 script = ExtResource("1_0jrkm")
 item_id = &"grass"
 display_name = "草"
 description = "一种常见的植物，可以用来制作各种物品。"
-usable = true
+usable = false
 buy_price = 1
 sell_price = 1
+icon = ExtResource("2_grasic")
 metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

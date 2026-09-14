@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="IslandShape" format=3 uid="uid://bshape001map"]
+
+[ext_resource type="Script" uid="uid://dviy5qlq6vfjv" path="res://map_gen/island_shape.gd" id="1_shp"]
+
+[resource]
+script = ExtResource("1_shp")

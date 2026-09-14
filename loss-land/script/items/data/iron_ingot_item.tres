@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_s"]
+[ext_resource type="Texture2D" path="res://art/icons/iron_ingot.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_s")
+item_id = &"iron_ingot"
+display_name = "铁锭"
+description = "熔炉里炼出的铁锭，打造高级工具与武器的基础材料。
+来源：合成（铁矿 x1 + 煤矿 x1，需要熔炉）。"
+item_type = 3
+stackable = true
+max_stack = 99
+usable = false
+buy_price = 12
+sell_price = 6
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_s"]
+[ext_resource type="Texture2D" path="res://art/icons/furnace.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_s")
+item_id = &"furnace"
+display_name = "熔炉"
+description = "石砌熔炉。
+功能：把铁矿与煤矿冶炼成铁锭，并在周围 5 米内提供热源。"
+item_type = 8
+stackable = false
+max_stack = 1
+usable = false
+buy_price = 40
+sell_price = 20
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

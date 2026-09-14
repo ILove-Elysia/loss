@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_br"]
+[ext_resource type="Texture2D" path="res://art/icons/berry.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_br")
+item_id = &"berry"
+display_name = "浆果"
+description = "酸甜的野生浆果。
+右键食用：恢复 25 点饱食度，并回复 10 点生命。
+（大纲 3.3.2：吃食物 = 补饱食度 且 回血，一起结算；饱食度已满时吃不下。）
+来源：草原与丛林的浆果丛（空手可采，会再生）。"
+item_type = 2
+stackable = true
+max_stack = 30
+usable = true
+use_effect = "+25_food +10_health"
+consume_on_use = true
+buy_price = 2
+sell_price = 1
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

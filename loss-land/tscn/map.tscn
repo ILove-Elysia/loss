@@ -3,14 +3,14 @@
 [ext_resource type="Script" uid="uid://e8fw6weajj0q" path="res://script/resources/resource_manager.gd" id="2_yx4x3"]
 [ext_resource type="Resource" uid="uid://bvneoolsrpytf" path="res://script/resources/data/resource_registry.tres" id="3_x0n1c"]
 [ext_resource type="Script" uid="uid://cp1q2e0stnpi1" path="res://script/resources/spawn/resource_spawner.gd" id="4_e2bhf"]
-[ext_resource type="Script" uid="uid://c5gxpjccyt7u8" path="res://script/ui/inventory_ui.gd" id="5_e2bhf"]
 [ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="5_x0n1c"]
 [ext_resource type="Script" uid="uid://chxm123" path="res://script/ui/hud_ui.gd" id="6_hud"]
 [ext_resource type="PackedScene" uid="uid://fgvu0ochdchi" path="res://tscn/prefab/slime.tscn" id="7_1f6fc"]
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_yx4x3"]
-
-[sub_resource type="WorldBoundaryShape3D" id="WorldBoundaryShape3D_1f6fc"]
+[ext_resource type="PackedScene" uid="uid://cdron00000001" path="res://tscn/prefab/drone.tscn" id="8_drone"]
+[ext_resource type="Script" uid="uid://b8okopvghar8m" path="res://script/map/map_generator_3d.gd" id="8_map"]
+[ext_resource type="Script" uid="uid://b15rkpyvujim1" path="res://script/ui/ui_manager.gd" id="9_uimgr"]
+[ext_resource type="Script" uid="uid://yt7rdns2eelq" path="res://script/world/day_night_cycle.gd" id="10_daynight"]
+[ext_resource type="Script" uid="uid://cworldstream1" path="res://script/world/world_streamer.gd" id="11_streamer"]
 
 [sub_resource type="Environment" id="Environment_fwkbq"]
 ambient_light_source = 2
@@ -21,23 +21,17 @@ ambient_light_energy = 9.0
 
 [node name="Node3D" type="Node3D" unique_id=1595994190]
 
-[node name="Ground" type="StaticBody3D" parent="." unique_id=522924445]
-collision_layer = 2
-collision_mask = 3
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=676697705]
-transform = Transform3D(9.993883, 0, 0, 0, 9.993883, 0, 0, 0, 9.993883, 0.0061779027, 1.1920929e-07, 0.0011007786)
-mesh = SubResource("PlaneMesh_yx4x3")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1699854013]
-transform = Transform3D(-20, 0, 3.019916e-06, 0, 20, 0, -3.019916e-06, 0, -20, 0, 0, 0)
-shape = SubResource("WorldBoundaryShape3D_1f6fc")
+[node name="MapGenerator3D" type="Node3D" parent="." unique_id=1065727641]
+script = ExtResource("8_map")
 
 [node name="player" parent="." unique_id=244025735 instance=ExtResource("5_x0n1c")]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=240844916]
 environment = SubResource("Environment_fwkbq")
 compositor = SubResource("Compositor_ko02n")
+
+[node name="DayNightCycle" type="Node3D" parent="." unique_id=536737691]
+script = ExtResource("10_daynight")
 
 [node name="ResourceManager" type="Node" parent="." unique_id=1535792619 node_paths=PackedStringArray("spawner", "resource_container")]
 script = ExtResource("2_yx4x3")
@@ -52,15 +46,10 @@ metadata/_custom_type_script = "uid://cp1q2e0stnpi1"
 
 [node name="ResourceContainer" type="Node3D" parent="." unique_id=771513188]
 
-[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=527698529]
+[node name="UIManager" type="Node" parent="." unique_id=777000111]
+script = ExtResource("9_uimgr")
 
-[node name="InventoryUI" type="Control" parent="CanvasLayer" unique_id=1939615469]
-layout_mode = 3
-anchors_preset = 0
-offset_right = 40.0
-offset_bottom = 40.0
-script = ExtResource("5_e2bhf")
-metadata/_custom_type_script = "uid://c5gxpjccyt7u8"
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=527698529]
 
 [node name="HUDUI" type="Control" parent="CanvasLayer" unique_id=123456]
 layout_mode = 3
@@ -70,6 +59,9 @@ offset_bottom = 40.0
 script = ExtResource("6_hud")
 metadata/_custom_type_script = "uid://chxm123"
 
-[node name="Slime" parent="." unique_id=888888881 instance=ExtResource("7_1f6fc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.8106308, 0, 0)
-attack_range = 2.0
+[node name="Slime" parent="." unique_id=888888881 groups=["enemy"] instance=ExtResource("7_1f6fc")]
+
+[node name="Drone" parent="." unique_id=1384219798 instance=ExtResource("8_drone")]
+
+[node name="WorldStreamer" type="Node" parent="." unique_id=447700111]
+script = ExtResource("11_streamer")

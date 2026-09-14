@@ -131,11 +131,20 @@ func _build_cache() -> void:
 # 获取单例函数
 # 返回全局物品注册表实例
 #
+# 首次访问时自动从磁盘加载注册表资源（懒加载），
+# 不依赖 autoload 或场景初始化顺序——headless 测试、
+# 掉落物、采集实体在任何时刻取用都能拿到数据。
+#
 # 使用方法：
 #   var registry = ItemRegistry.get_registry()
 #   var grass = registry.get_item(&"grass")
 # ----------------------------------------
 static func get_registry() -> ItemRegistry:
+	if _instance == null:
+		var registry_resource: Resource = load("res://script/items/data/item_registry.tres")
+		if registry_resource is ItemRegistry:
+			_instance = registry_resource
+			_instance._build_cache()
 	return _instance
 
 # ----------------------------------------

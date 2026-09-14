@@ -197,14 +197,21 @@ func add_item(item_data: ItemData, count: int = 1) -> int:
 	var remaining = count
 
 	# 如果物品可堆叠，先尝试堆叠到现有槽位
+	# 防死循环：slot.add 返回 0（slot 满）时必须 break，否则 while 永不退出
 	if item_data.stackable:
 		while remaining > 0:
 			var slot_idx = find_stackable_slot(item_data.item_id)
 			if slot_idx == -1:
 				break
 
+			# _slots 是无类型 Array，取出的元素是 Variant，
+			# 对 Variant 取 .quantity 无法用 := 推断类型，必须显式声明 int
 			var slot = _slots[slot_idx]
-			var added = slot.add(remaining)
+			var before: int = slot.quantity
+			var added: int = slot.add(remaining)
+			# slot.add 在 slot 满时返回 0，避免再次回到同一个满 slot
+			if added <= 0 or slot.quantity == before:
+				break
 			remaining -= added
 			item_changed.emit(slot_idx)
 
@@ -363,6 +370,39 @@ func move_item(from_slot: int, to_slot: int) -> void:
 	item_changed.emit(to_slot)
 
 # ----------------------------------------
+# 跨背包移动物品函数（静态）
+# 箱子 ↔ 玩家背包 拖拽共用：目标空=整堆搬过去；同类可堆叠=合并（放不下的留在源槽）；
+# 否则=交换两个槽位。只改数据，各自通过 item_changed 信号回刷 UI。
+# 注意 Inventory._slots 是私有数组，这里全部走 get_item/set_slot/clear_slot 公共接口。
+# ----------------------------------------
+static func move_between(from_inv: Inventory, from_slot: int, to_inv: Inventory, to_slot: int) -> void:
+	if from_inv == null or to_inv == null or from_inv == to_inv:
+		return
+	var from_item = from_inv.get_item(from_slot)
+	if from_item == null or from_item.is_empty():
+		return
+	var to_item = to_inv.get_item(to_slot)
+
+	# 目标槽为空：整堆搬过去
+	if to_item == null or to_item.is_empty():
+		to_inv.set_slot(to_slot, from_item)
+		from_inv.clear_slot(from_slot)
+		return
+
+	# 同类可堆叠：能合多少合多少，合不下的留在源槽
+	if from_item.can_merge_with(to_item):
+		to_item.merge(from_item)
+		if from_item.is_empty():
+			from_inv.clear_slot(from_slot)
+		else:
+			from_inv.set_slot(from_slot, from_item)
+		return
+
+	# 否则交换
+	to_inv.set_slot(to_slot, from_item)
+	from_inv.set_slot(from_slot, to_item)
+
+# ----------------------------------------
 # 清空背包函数
 # 移除所有物品
 # ----------------------------------------
@@ -414,6 +454,16 @@ func load_data(data: Dictionary) -> void:
 			var item = ItemInstance.new()
 			if item.from_dict(item_data.item):
 				_slots[slot] = item
+
+# ----------------------------------------
+# 通知所有槽位刷新函数
+# 读档专用：load_data 是直接写内部数组、不发 item_changed 的，
+# 于是 HUD 快捷栏与背包界面会一直停留在读档前的旧内容。
+# 读档完成后调一次，把所有槽位通知出去。
+# ----------------------------------------
+func notify_all_slots() -> void:
+	for i in range(_slots.size()):
+		item_changed.emit(i)
 
 # ============================================
 # 私有方法

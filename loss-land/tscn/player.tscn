@@ -3,6 +3,12 @@
 [ext_resource type="Texture2D" uid="uid://b2jy0gdl7lb2v" path="res://art/player/char_blue.png" id="1_7j80i"]
 [ext_resource type="Script" uid="uid://dwslhqdnidaik" path="res://script/player/physics.gd" id="1_7omxl"]
 [ext_resource type="Script" uid="uid://btim5rl33bcbf" path="res://script/player/camera_3d.gd" id="2_3c7ea"]
+[ext_resource type="Script" uid="uid://b6vy6q256gmvk" path="res://script/player/vitals.gd" id="4_vitals"]
+[ext_resource type="Script" uid="uid://dxlrimo3f4vb5" path="res://script/inventory/inventory.gd" id="5_inv"]
+[ext_resource type="Script" uid="uid://6wjg4g6bfof3" path="res://script/player/equipment.gd" id="6_equip"]
+[ext_resource type="Script" uid="uid://bl0g8voawha1u" path="res://script/debug/terrain_probe.gd" id="7_terrain"]
+[ext_resource type="Script" uid="uid://xkud0cw4apfd" path="res://script/player/build_placer.gd" id="8_placer"]
+[ext_resource type="Script" uid="uid://brg45r4hiedph" path="res://script/player/click_mover.gd" id="9_clickmover"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_onrkg"]
 height = 1.0
@@ -263,16 +269,34 @@ animations = [{
 [node name="player" type="Node3D" unique_id=244025735 groups=["player"]]
 transform = Transform3D(0.9999962, -0.0016661444, 0.00220246, 0.0016754757, 0.9999896, -0.004239774, -0.00219537, 0.00424345, 0.99998856, 0, 0, 0)
 
+[node name="Vitals" type="Node" parent="." unique_id=849297944]
+script = ExtResource("4_vitals")
+
+[node name="Inventory" type="Node" parent="." unique_id=1487691669]
+script = ExtResource("5_inv")
+
+[node name="Equipment" type="Node" parent="." unique_id=433597818]
+script = ExtResource("6_equip")
+
+[node name="TerrainProbe" type="Node" parent="." unique_id=1587963034]
+script = ExtResource("7_terrain")
+
+[node name="BuildPlacer" type="Node" parent="." unique_id=21110590]
+script = ExtResource("8_placer")
+
+[node name="ClickMover" type="Node" parent="." unique_id=137539177]
+script = ExtResource("9_clickmover")
+
 [node name="Physics" type="CharacterBody3D" parent="." unique_id=350729959]
 collision_mask = 3
 script = ExtResource("1_7omxl")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Physics" unique_id=1866022803]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.50154835, 0)
+transform = Transform3D(1, 1.0191798e-08, 0, 6.1654646e-09, 1, 4.0978193e-08, -2.0489097e-08, 0, 1, 4.3201e-11, 0.50154835, -2.3283064e-10)
 shape = SubResource("CylinderShape3D_onrkg")
 
 [node name="Camera_controller" type="Node3D" parent="." unique_id=1750702658]
-top_level = true
+transform = Transform3D(0.9999962, 0.0016754713, -0.0021953732, -0.0016661487, 0.99998957, 0.004243448, 0.0022024568, -0.0042397757, 0.9999886, 0, 0, 0)
 
 [node name="Camera_Target" type="Node3D" parent="Camera_controller" unique_id=2133385941]
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 2, 2)
@@ -281,7 +305,6 @@ transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70
 current = true
 script = ExtResource("2_3c7ea")
 target = NodePath("../../../Physics")
-zoom_speed = 4.0
 
 [node name="Visual" type="Node3D" parent="." unique_id=1533953368]
 transform = Transform3D(1, 4.129106e-10, 0, 4.28372e-10, 1, 1.8626451e-09, -9.313226e-10, 0, 1, 0, 0, 0)
@@ -291,4 +314,4 @@ transform = Transform3D(-2.6434116, 2.0202911e-14, -8.742278e-08, 0, -2.6434116,
 flip_h = true
 flip_v = true
 sprite_frames = SubResource("SpriteFrames_hl5qd")
-animation = &"die"
+animation = &"hurt"

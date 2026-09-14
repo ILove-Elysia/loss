@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_br"]
+[ext_resource type="Texture2D" path="res://art/icons/grass.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_br")
+item_id = &"herb_bandage"
+display_name = "草药绷带"
+description = "嚼碎的草药与草茎缠成的简陋绷带。右键使用：立即回复 25 点生命。来源：冒险家专属「求生」制作栏。"
+item_type = 5
+stackable = true
+max_stack = 20
+usable = true
+use_effect = "+25_health"
+consume_on_use = true
+exclusive_owner = &"adventurer"
+access_policy = 0
+buy_price = 8
+sell_price = 3
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

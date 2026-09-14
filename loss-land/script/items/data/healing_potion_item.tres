@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_br"]
+[ext_resource type="Texture2D" path="res://art/icons/berry.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_br")
+item_id = &"healing_potion"
+display_name = "治疗药剂"
+description = "黏稠的红色药水，入口是铁锈与浆果的味道。右键使用：立即回复 50 点生命。来源：魔女专属「炼药」制作栏。"
+item_type = 5
+stackable = true
+max_stack = 10
+usable = true
+use_effect = "+50_health"
+consume_on_use = true
+exclusive_owner = &"witch"
+access_policy = 0
+buy_price = 18
+sell_price = 7
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

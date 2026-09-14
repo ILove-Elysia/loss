@@ -79,15 +79,23 @@ func initialize(scene: PackedScene, data: ResourceData) -> void:
 #   data - 资源数据配置
 #   position - 放置位置
 #   state - 初始状态
+#   container - 实体要挂到的父节点（通常是资源容器）
 # 返回：资源实体实例
 #
 # 流程：
 # 1. 先尝试从池中获取
 # 2. 池中没有，创建新的
-# 3. 设置位置和状态
+# 3. 先挂进场景树，再设置位置和状态
 # 4. 添加到活跃列表
+#
+# 为什么必须先入树再设置：
+#   global_position 与 set_state() → 状态机 → 可视化组件都会读节点的
+#   全局变换，节点不在树里时 Godot 会报
+#   "Condition !is_inside_tree() is true. Returning: Transform3D()"。
+#   此前是"先进池、后入树"，于是每生成一个资源就刷两条报错——
+#   读档要恢复 2000+ 个资源，一次读档能刷出上千条错误日志。
 # ----------------------------------------
-func acquire(data: ResourceData, position: Vector3, state: ResourceState.State = ResourceState.State.GROWING) -> ResourceEntity:
+func acquire(data: ResourceData, position: Vector3, state: ResourceState.State = ResourceState.State.GROWING, container: Node = null) -> ResourceEntity:
 	# 1. 尝试从池中获取
 	var entity = _get_from_pool(data)
 	
@@ -97,11 +105,14 @@ func acquire(data: ResourceData, position: Vector3, state: ResourceState.State =
 	
 	# 3. 如果成功获取到实体
 	if entity:
-		# 设置位置
-		entity.global_position = position
-		# 设置状态
+		# 3.1 先入树（池里的对象在 release 时已 remove_child，没有父节点）
+		if container != null and entity.get_parent() == null:
+			container.add_child(entity)
+		# 3.2 设置位置：强制贴地，避免资源悬浮在半空
+		entity.global_position = Vector3(position.x, 0.0, position.z)
+		# 3.3 设置状态
 		entity.set_state(state)
-		# 添加到活跃列表
+		# 3.4 添加到活跃列表
 		_active_entities.append(entity)
 	
 	return entity
@@ -121,9 +132,15 @@ func release(entity: ResourceEntity) -> void:
 	# 从活跃列表中移除
 	if entity in _active_entities:
 		_active_entities.erase(entity)
-	
+
+	# 复位（2026-09-12 视野流式加载）：
+	# 实体是被反复复用的——卸载一棵树、同一节点可能立刻被拿去表示一块石头。
+	# 必须先把上一世的遗留（隐藏的网格、还在跑的再生计时器、钉住标记）清干净。
+	if entity.has_method("reset_for_pool"):
+		entity.call("reset_for_pool")
+
 	# 获取资源ID
-	var resource_id = str(entity.resource_data.resource_id)
+	var resource_id = str(entity.resource_data.resource_id) if entity.resource_data != null else ""
 	
 	# 确保池中有这个资源类型的列表
 	if not _inactive_pool.has(resource_id):
@@ -134,7 +151,10 @@ func release(entity: ResourceEntity) -> void:
 	# 如果池没满，放回池中复用
 	if pool.size() < max_pool_size:
 		# 从父节点移除（但不销毁）
-		entity.get_parent().remove_child(entity)
+		# 没有父节点 = 已经被移除过（重复 release），此时直接入池即可
+		var parent := entity.get_parent()
+		if parent != null:
+			parent.remove_child(entity)
 		pool.append(entity)
 	else:
 		# 池满了，直接销毁

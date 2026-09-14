@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://cbat000000001"]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_bat"]
+[ext_resource type="Texture2D" path="res://art/icons/battery.png" id="2_batic"]
+
+[resource]
+script = ExtResource("1_bat")
+item_id = &"battery"
+display_name = "电池"
+description = "远古型号的能量电池。
+右键使用：立即恢复 10 点电量。
+来源：击败小型无人机（20% 掉落）。"
+item_type = 3
+stackable = true
+max_stack = 20
+usable = true
+use_effect = "+10_power"
+consume_on_use = true
+buy_price = 5
+sell_price = 2
+icon = ExtResource("2_batic")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

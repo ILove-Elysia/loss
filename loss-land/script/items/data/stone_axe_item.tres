@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_s"]
+[ext_resource type="Texture2D" path="res://art/icons/stone_axe.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_s")
+item_id = &"stone_axe"
+display_name = "石斧"
+description = "石制斧头，比木斧更趁手。
+效果：木材采集速度+100%。"
+item_type = 1
+stackable = false
+max_stack = 1
+usable = false
+buy_price = 20
+sell_price = 10
+icon = ExtResource("2_icon")
+equip_slot = 3
+attack_bonus = 0
+defense_bonus = 0
+harvest_speed_bonus = 1.0
+tool_type = 1
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

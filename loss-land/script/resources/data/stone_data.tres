@@ -5,12 +5,15 @@
 [resource]
 script = ExtResource("1_ys3r6")
 resource_id = "stone"
-display_name = "石头"
+display_name = "大石头"
 resource_type = 3
 growing_animation = "growing"
 harvested_animation = "broken"
 transition_duration = 0.6
 min_distance = 3.0
+initial_count = 500
+harvest_time = 1.0
+required_tool = 2
 drop_item_id = "rock"
 drop_count_max = 3
 can_regenerate = false

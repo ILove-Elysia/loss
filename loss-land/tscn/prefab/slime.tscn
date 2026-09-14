@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://fgvu0ochdchi"]
 
-[ext_resource type="Script" uid="uid://slime001" path="res://script/enemy/slime.gd" id="1_slime"]
+[ext_resource type="Script" uid="uid://slime001" path="res://script/ai/enemy/mob/slime.gd" id="1_slime"]
 [ext_resource type="Texture2D" uid="uid://b8o4pupwtgvoq" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Attack.png" id="2_vi4k8"]
 [ext_resource type="Texture2D" uid="uid://vxnef6dckd65" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Die.png" id="3_uw4y3"]
 [ext_resource type="Texture2D" uid="uid://f82d8r1l1ubv" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Hit.png" id="4_yrvbh"]
@@ -487,6 +487,7 @@ height = 1.0
 radius = 0.33496094
 
 [node name="Slime" type="CharacterBody3D" unique_id=888888881]
+collision_mask = 3
 script = ExtResource("1_slime")
 
 [node name="Visual" type="Node3D" parent="." unique_id=888888882]

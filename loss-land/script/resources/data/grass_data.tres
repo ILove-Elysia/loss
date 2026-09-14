@@ -4,9 +4,15 @@
 
 [resource]
 script = ExtResource("1_idiyn")
+resource_id = "grass"
 display_name = "草"
 growing_animation = "growing"
 transition_duration = 0.5
+initial_count = 500
+harvest_time = 0.0
+required_tool = 0
+drop_item_id = "grass"
+drop_count_min = 1
 drop_count_max = 2
 can_dig = true
 metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

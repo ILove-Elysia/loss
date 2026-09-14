@@ -1,0 +1,7 @@
+[gd_scene format=3 uid="uid://cdron00000001"]
+
+[ext_resource type="Script" uid="uid://c5in6ias8o3kq" path="res://script/ai/enemy/mob/drone/drone.gd" id="1_drone"]
+
+[node name="Drone" type="CharacterBody3D" unique_id=736570386 groups=["enemy"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+script = ExtResource("1_drone")

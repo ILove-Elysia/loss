@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_s"]
+[ext_resource type="Texture2D" path="res://art/icons/workbench.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_s")
+item_id = &"workbench"
+display_name = "工作台"
+description = "木工台。
+功能：解锁高级合成配方（需建造系统放置后生效）。"
+item_type = 8
+stackable = false
+max_stack = 1
+usable = false
+buy_price = 30
+sell_price = 15
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

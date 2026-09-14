@@ -5,8 +5,24 @@
 [ext_resource type="Resource" uid="uid://ct0bl3ogrinot" path="res://script/resources/data/grass_data.tres" id="2"]
 [ext_resource type="Resource" uid="uid://cdygm3o68cjv0" path="res://script/resources/data/tree_data.tres" id="3"]
 [ext_resource type="Resource" uid="uid://pcx681brgiwm" path="res://script/resources/data/stone_data.tres" id="4"]
+[ext_resource type="Resource" path="res://script/resources/data/coal_data.tres" id="4_coal"]
+[ext_resource type="Resource" path="res://script/resources/data/iron_ore_data.tres" id="4_iron"]
+[ext_resource type="Resource" path="res://script/resources/data/pebble_data.tres" id="6_pebble"]
+[ext_resource type="Resource" path="res://script/resources/data/twig_data.tres" id="7_twig"]
+[ext_resource type="Resource" path="res://script/resources/data/berry_data.tres" id="8_berry"]
+[ext_resource type="PackedScene" uid="uid://c0r3s0urcev1s" path="res://tscn/resource_entity.tscn" id="5_scene"]
 
 [resource]
 script = ExtResource("1")
-resource_datas = Array[ExtResource("1_dpo8g")]([ExtResource("2"), ExtResource("3"), ExtResource("4")])
+resource_datas = Array[ExtResource("1_dpo8g")]([ExtResource("2"), ExtResource("3"), ExtResource("4"), ExtResource("4_iron"), ExtResource("4_coal"), ExtResource("6_pebble"), ExtResource("7_twig"), ExtResource("8_berry")])
+resource_scenes = Dictionary[StringName, PackedScene]({
+&"berry": ExtResource("5_scene"),
+&"coal": ExtResource("5_scene"),
+&"grass": ExtResource("5_scene"),
+&"iron_ore": ExtResource("5_scene"),
+&"pebble": ExtResource("5_scene"),
+&"stone": ExtResource("5_scene"),
+&"tree": ExtResource("5_scene"),
+&"twig": ExtResource("5_scene")
+})
 metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

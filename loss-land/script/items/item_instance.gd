@@ -37,17 +37,23 @@ var data: ItemData:
 		# 数据改变时，检查数量是否超过最大堆叠
 		_clamp_quantity()
 
+# 数量后备字段
+# 重要：quantity 的 setter 内部绝不能再对 quantity 赋值，
+# 否则 setter → _clamp → setter 无限递归（栈溢出）。
+# _clamp_quantity 只写 _quantity，绕开 setter。
+var _quantity: int = 1
+
 # 物品数量
 # 当前这个实例中有多少个该物品
 var quantity: int = 1:
 	set(value):
-		var old_quantity = quantity
-		quantity = value
-		# 数量改变时，限制在有效范围内
-		_clamp_quantity()
+		var old_quantity = _quantity
+		_quantity = _clamped(value)
 		# 如果数量真的改变了，发出信号
-		if quantity != old_quantity:
-			quantity_changed.emit(quantity)
+		if _quantity != old_quantity:
+			quantity_changed.emit(_quantity)
+	get:
+		return _quantity
 
 # ============================================
 # 构造函数
@@ -237,15 +243,19 @@ func from_dict(dict: Dictionary) -> bool:
 
 # ----------------------------------------
 # 限制数量函数
-# 确保数量在有效范围内
+# 确保数量在有效范围内（只写后备字段，不触发 setter）
 # ----------------------------------------
 func _clamp_quantity() -> void:
-	if not data:
-		quantity = 0
-		return
+	_quantity = _clamped(_quantity)
 
+
+# 计算合法数量（纯函数，无副作用）
+func _clamped(value: int) -> int:
+	if not data:
+		return 0
 	# 数量不能小于0
-	quantity = maxi(quantity, 0)
+	var v: int = maxi(value, 0)
 	# 数量不能超过最大堆叠
 	if data.stackable:
-		quantity = mini(quantity, data.max_stack)
+		v = mini(v, data.max_stack)
+	return v

@@ -117,6 +117,20 @@ func resume_regeneration(remaining_time: float) -> void:
 	regeneration_timer.start(remaining_time)
 
 # ----------------------------------------
+# 取消再生函数
+# 停止计时并清掉"正在再生"标记。
+# 实体退回对象池时调用（见 ResourceEntity.reset_for_pool）：
+# 实体被复用去表示另一个资源，上一世的倒计时必须彻底停掉，
+# 否则它会在新资源身上突然触发 regeneration_complete，把已采集的资源变回生长态。
+# ----------------------------------------
+func cancel_regeneration() -> void:
+	_is_regenerating = false
+	_elapsed_time = 0.0
+	_paused_time = 0.0
+	if regeneration_timer:
+		regeneration_timer.stop()
+
+# ----------------------------------------
 # 暂停再生函数
 # 游戏暂停时调用
 # ----------------------------------------

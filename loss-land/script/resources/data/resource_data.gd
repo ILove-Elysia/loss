@@ -35,7 +35,10 @@ enum ResourceType {
 	STONE,      # 石头
 	BUSH,       # 灌木
 	FLOWER,     # 花
-	CUSTOM      # 自定义（用于特殊资源）
+	CUSTOM,     # 自定义（用于特殊资源）
+	IRON_ORE,   # 铁矿（矿区/火山/雪地，需镐）
+	COAL,       # 煤矿（矿区/火山，需镐）
+	PEBBLE      # 小石块（空手可捡的碎石，掉落石头；大石头才需要镐）
 }
 
 # ----------------------------------------
@@ -233,3 +236,32 @@ func get_drop_count() -> int:
 # ----------------------------------------
 func get_dig_drop_count() -> int:
 	return randi_range(dig_drop_count_min, dig_drop_count_max)
+
+
+# ----------------------------------------
+# 工具中文名（静态）：采集被拒时给玩家看的提示要用
+# 数值与 HarvestTool 枚举一一对应
+# ----------------------------------------
+static func get_required_tool_name(tool: int) -> String:
+	match tool:
+		HarvestTool.AXE:
+			return "斧头"
+		HarvestTool.PICKAXE:
+			return "镐子"
+		HarvestTool.SHOVEL:
+			return "铲子"
+		HarvestTool.KNIFE:
+			return "小刀"
+	return "工具"
+
+
+# ----------------------------------------
+# 采集动词（静态）：斧头="砍伐"、镐子="挖掘"，其余笼统说"采集"
+# ----------------------------------------
+static func get_harvest_verb(tool: int) -> String:
+	match tool:
+		HarvestTool.AXE:
+			return "砍伐"
+		HarvestTool.PICKAXE:
+			return "挖掘"
+	return "采集"

@@ -1,0 +1,87 @@
+[gd_scene format=3 uid="uid://bmap3dgen803q"]
+
+[ext_resource type="Script" uid="uid://c8a2r3yo0a1wm" path="res://main_3d.gd" id="1_main3d"]
+[ext_resource type="Script" uid="uid://di8hywvr1l6t5" path="res://map_gen/island_generator.gd" id="2_isl"]
+[ext_resource type="Script" uid="uid://b0u0dvl8epeiy" path="res://map_gen/terrain_placer.gd" id="3_plc"]
+[ext_resource type="Script" uid="uid://cv6o7ojfjctdd" path="res://map_gen/terrain_diffuser.gd" id="4_dif"]
+[ext_resource type="Script" uid="uid://cn66fty72glei" path="res://map_gen/beach_postprocessor.gd" id="5b_bch"]
+[ext_resource type="Script" uid="uid://c2chimmlmo5va" path="res://map_gen/map_renderer_3d.gd" id="5_rnd3d"]
+[ext_resource type="Script" uid="uid://dt5g74hcoxm77" path="res://camera_controller_3d.gd" id="6_cam"]
+
+[node name="map_3D" type="Node3D" unique_id=2051325473]
+script = ExtResource("1_main3d")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1104597884]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=432883156]
+transform = Transform3D(0.788675, -0.211325, -0.57735, 0.57735, 0.57735, 0.57735, -0.211325, -0.788675, 0.57735, 0, 0, 0)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="CameraTarget" type="Node3D" parent="." unique_id=1457395808]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 0, 100)
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=447947308]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 220, 280)
+current = true
+fov = 50.0
+near = 0.5
+far = 2000.0
+script = ExtResource("6_cam")
+
+[node name="Renderer3D" type="Node" parent="." unique_id=143464852]
+script = ExtResource("5_rnd3d")
+
+[node name="IslandGen" type="Node" parent="." unique_id=690034909]
+script = ExtResource("2_isl")
+
+[node name="Placer" type="Node" parent="." unique_id=672968925]
+script = ExtResource("3_plc")
+
+[node name="Diffuser" type="Node" parent="." unique_id=2005894626]
+script = ExtResource("4_dif")
+
+[node name="Beach" type="Node" parent="." unique_id=1185671297]
+script = ExtResource("5b_bch")
+beach_width = 5
+
+[node name="UI" type="Control" parent="." unique_id=241514283]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Margin" type="MarginContainer" parent="UI" unique_id=2096357567]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="UI/Margin" unique_id=1845090061]
+layout_mode = 2
+
+[node name="Row" type="HBoxContainer" parent="UI/Margin/VBox" unique_id=57294978]
+layout_mode = 2
+size_flags_vertical = 3
+alignment = 2
+
+[node name="Side" type="VBoxContainer" parent="UI/Margin/VBox/Row" unique_id=40838527]
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+theme_override_constants/separation = 12
+
+[node name="RegenButton" type="Button" parent="UI/Margin/VBox/Row/Side" unique_id=84705539]
+custom_minimum_size = Vector2(240, 50)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "重新生成地图"

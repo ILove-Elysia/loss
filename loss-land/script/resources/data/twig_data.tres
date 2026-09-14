@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ResourceData" format=3]
+
+[ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_tw"]
+
+[resource]
+script = ExtResource("1_tw")
+resource_id = "twig"
+display_name = "木棍"
+resource_type = 1
+growing_animation = "growing"
+harvested_animation = "broken"
+transition_duration = 0.4
+min_distance = 2.0
+initial_count = 250
+harvest_time = 0.2
+required_tool = 0
+drop_item_id = "stick"
+drop_count_min = 1
+drop_count_max = 2
+can_regenerate = true
+regeneration_time = 300.0
+metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

@@ -1,0 +1,82 @@
+[gd_scene format=3 uid="uid://bmapgen2d8xk1"]
+
+[ext_resource type="Script" uid="uid://d4gsjn6bxd6f" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://di8hywvr1l6t5" path="res://map_gen/island_generator.gd" id="2_isl"]
+[ext_resource type="Script" uid="uid://b0u0dvl8epeiy" path="res://map_gen/terrain_placer.gd" id="3_plc"]
+[ext_resource type="Script" uid="uid://cv6o7ojfjctdd" path="res://map_gen/terrain_diffuser.gd" id="4_dif"]
+[ext_resource type="Script" uid="uid://dfwpyol631m53" path="res://map_gen/map_renderer.gd" id="5_rnd"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_mapborder"]
+content_margin_left = 3.0
+content_margin_top = 3.0
+content_margin_right = 3.0
+content_margin_bottom = 3.0
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.23, 0.36, 0.46, 1)
+
+[node name="Main" type="Control" unique_id=445801356]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="Margin" type="MarginContainer" parent="." unique_id=1621262974]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="Margin" unique_id=356552608]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Row" type="HBoxContainer" parent="Margin/VBox" unique_id=423899555]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 22
+alignment = 1
+
+[node name="MapPanel" type="PanelContainer" parent="Margin/VBox/Row" unique_id=1258212741]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_mapborder")
+
+[node name="MapTexture" type="TextureRect" parent="Margin/VBox/Row/MapPanel" unique_id=722384690]
+texture_filter = 1
+custom_minimum_size = Vector2(600, 600)
+layout_mode = 2
+expand_mode = 1
+
+[node name="Side" type="VBoxContainer" parent="Margin/VBox/Row" unique_id=1499631869]
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_constants/separation = 12
+
+[node name="RegenButton" type="Button" parent="Margin/VBox/Row/Side" unique_id=2146357775]
+custom_minimum_size = Vector2(240, 50)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "重新生成地图"
+
+[node name="IslandGen" type="Node" parent="." unique_id=2136665191]
+script = ExtResource("2_isl")
+
+[node name="Placer" type="Node" parent="." unique_id=1193447981]
+script = ExtResource("3_plc")
+
+[node name="Diffuser" type="Node" parent="." unique_id=1287078729]
+script = ExtResource("4_dif")
+
+[node name="Renderer" type="Node" parent="." unique_id=241327913]
+script = ExtResource("5_rnd")

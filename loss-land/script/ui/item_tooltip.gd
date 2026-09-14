@@ -36,8 +36,25 @@ var _desc_label: RichTextLabel
 # ============================================
 
 func _ready() -> void:
+	# 纯展示控件，绝不能拦鼠标：
+	# 提示框紧贴鼠标右下方 (+16,+16)，会盖住所在格子的右下半边。
+	# 若不设 IGNORE，玩家在那半边上按下左键会被提示框吃掉，
+	# 导致"这个格子拖不动"（拖拽起不来）。
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_setup_ui()
 	_setup_style()
+	# 注意：Godot 的命中测试会穿透 IGNORE 的父节点继续检查子节点，
+	# 所以必须把整棵子树都设为 IGNORE（Margin/VBox/RichTextLabel 默认是 STOP）。
+	_disable_mouse_recursive(self)
+
+# ----------------------------------------
+# 递归关闭整棵子树的鼠标拦截（提示框只负责显示）
+# ----------------------------------------
+func _disable_mouse_recursive(node: Node) -> void:
+	for child in node.get_children():
+		if child is Control:
+			(child as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_disable_mouse_recursive(child)
 
 # ============================================
 # 公共方法
@@ -146,8 +163,29 @@ func _update_display() -> void:
 	# 设置类型
 	_type_label.text = data.get_type_name()
 
-	# 设置描述
-	if data.description.is_empty():
-		_desc_label.text = ""
+	# 设置描述（末尾附上可执行的操作提示，玩家不用猜）
+	var desc: String = data.description
+	var hint_text := "[color=#9aa0a6][左键拖拽] 移动位置[/color]"
+
+	# 专属权限（大纲 v0.7 · 2.2.4-④ 决策 ⑦）：能被用但带专属加成 → 绿字；
+	# 被其他角色拒用 → 红字。**提前告知**，玩家不用靠"右键试试看"才发现用不了。
+	var access_hint: String = data.get_access_hint()
+	if not access_hint.is_empty():
+		var acc_col: String = "#8fd18f" if data.is_usable_by("") else "#ff8a80"
+		hint_text = "[color=%s]%s[/color]\n" % [acc_col, access_hint] + hint_text
+
+	# 被拒时不再提示"右键使用"，免得自相矛盾
+	var usable_now: bool = data.is_usable_by("")
+
+	# 建筑类：右键是"放置"，不是"使用"
+	if BuildingSystem.is_building(data.item_id):
+		hint_text = "[color=#ffd479][右键] 放置到地面[/color]\n" + hint_text
+	# 只对"真的能直接用"的物品提示右键使用——
+	# 若只判断 data.usable，遇到 usable=true 但 use_effect 为空的数据会"骗玩家"。
+	elif usable_now and ItemEffects.can_use(data):
+		hint_text = "[color=#8fd18f][右键] 使用[/color]\n" + hint_text
+
+	if desc.is_empty():
+		_desc_label.text = hint_text
 	else:
-		_desc_label.text = data.description
+		_desc_label.text = desc + "\n\n" + hint_text

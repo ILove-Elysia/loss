@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="TerrainPalette" format=3 uid="uid://cvoxq5dy8l36j"]
+
+[ext_resource type="Script" uid="uid://b5585whkli7le" path="res://map_gen/terrain_palette.gd" id="1_pal"]
+
+[resource]
+script = ExtResource("1_pal")

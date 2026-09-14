@@ -1,0 +1,8 @@
+检查了 33 个 .tres 文件
+物品 24 件、资源 7 种
+
+--- 警告 (2) ---
+  [warn] task_system.gd: 资源 flower 在映射表里但尚未实装（规划中）
+  [warn] task_system.gd: 资源 berry 在映射表里但尚未实装（规划中）
+
+数据引用检查通过

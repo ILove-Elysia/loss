@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_br"]
+[ext_resource type="Texture2D" path="res://art/icons/workbench.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_br")
+item_id = &"repair_kit"
+display_name = "维修包"
+description = "铁片、木楔与一整套自检工具。右键使用：修补外壳与关节，回复 40 点生命。专属加成：机器人自己动手修效果 ×1.5。来源：机器人专属「机械」制作栏。"
+item_type = 5
+stackable = true
+max_stack = 10
+usable = true
+use_effect = "+40_health"
+consume_on_use = true
+exclusive_owner = &"robot"
+access_policy = 1
+owner_bonus_mult = 1.5
+buy_price = 20
+sell_price = 8
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"
