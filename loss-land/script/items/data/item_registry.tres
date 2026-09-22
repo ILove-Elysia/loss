@@ -8,8 +8,6 @@
 [ext_resource type="Resource" path="res://script/items/data/wood_item.tres" id="10_wood"]
 [ext_resource type="Resource" path="res://script/items/data/rock_item.tres" id="10_rock"]
 [ext_resource type="Resource" path="res://script/items/data/stick_item.tres" id="10_stick"]
-[ext_resource type="Resource" path="res://script/items/data/wooden_axe_item.tres" id="10_wooden_axe"]
-[ext_resource type="Resource" path="res://script/items/data/wooden_pickaxe_item.tres" id="10_wooden_pickaxe"]
 [ext_resource type="Resource" path="res://script/items/data/stone_axe_item.tres" id="10_stone_axe"]
 [ext_resource type="Resource" path="res://script/items/data/stone_pickaxe_item.tres" id="10_stone_pickaxe"]
 [ext_resource type="Resource" path="res://script/items/data/wooden_sword_item.tres" id="10_wooden_sword"]
@@ -24,7 +22,6 @@
 [ext_resource type="Resource" path="res://script/items/data/iron_ingot_item.tres" id="11_iron_ingot"]
 [ext_resource type="Resource" path="res://script/items/data/iron_sword_item.tres" id="11_iron_sword"]
 [ext_resource type="Resource" path="res://script/items/data/iron_pickaxe_item.tres" id="11_iron_pickaxe"]
-[ext_resource type="Resource" path="res://script/items/data/crude_axe_item.tres" id="12_crude_axe"]
 [ext_resource type="Resource" path="res://script/items/data/iron_axe_item.tres" id="12_iron_axe"]
 [ext_resource type="Resource" path="res://script/items/data/berry_item.tres" id="13_berry"]
 [ext_resource type="Resource" path="res://script/items/data/herb_bandage_item.tres" id="20_herb_bandage"]
@@ -33,8 +30,10 @@
 [ext_resource type="Resource" path="res://script/items/data/vigor_draught_item.tres" id="20_vigor_draught"]
 [ext_resource type="Resource" path="res://script/items/data/power_cell_item.tres" id="20_power_cell"]
 [ext_resource type="Resource" path="res://script/items/data/repair_kit_item.tres" id="20_repair_kit"]
+[ext_resource type="Resource" path="res://script/items/data/power_core_item.tres" id="21_power_core"]
+[ext_resource type="Resource" path="res://script/items/data/thermal_underwear_item.tres" id="21_thermal_underwear"]
 
 [resource]
 script = ExtResource("2_c7u0y")
-items = Array[ExtResource("1_bkhi0")]([ExtResource("2_xtljc"), ExtResource("3_gel"), ExtResource("4_bat"), ExtResource("10_wood"), ExtResource("10_rock"), ExtResource("10_stick"), ExtResource("10_wooden_axe"), ExtResource("10_wooden_pickaxe"), ExtResource("10_stone_axe"), ExtResource("10_stone_pickaxe"), ExtResource("10_wooden_sword"), ExtResource("10_stone_sword"), ExtResource("10_grass_armor"), ExtResource("10_wood_armor"), ExtResource("10_workbench"), ExtResource("10_furnace"), ExtResource("10_storage_box"), ExtResource("11_iron_ore"), ExtResource("11_coal"), ExtResource("11_iron_ingot"), ExtResource("11_iron_sword"), ExtResource("11_iron_pickaxe"), ExtResource("12_crude_axe"), ExtResource("12_iron_axe"), ExtResource("13_berry"), ExtResource("20_herb_bandage"), ExtResource("20_trail_ration"), ExtResource("20_healing_potion"), ExtResource("20_vigor_draught"), ExtResource("20_power_cell"), ExtResource("20_repair_kit")])
+items = Array[ExtResource("1_bkhi0")]([ExtResource("2_xtljc"), ExtResource("3_gel"), ExtResource("4_bat"), ExtResource("10_wood"), ExtResource("10_rock"), ExtResource("10_stick"), ExtResource("10_stone_axe"), ExtResource("10_stone_pickaxe"), ExtResource("10_wooden_sword"), ExtResource("10_stone_sword"), ExtResource("10_grass_armor"), ExtResource("10_wood_armor"), ExtResource("10_workbench"), ExtResource("10_furnace"), ExtResource("10_storage_box"), ExtResource("11_iron_ore"), ExtResource("11_coal"), ExtResource("11_iron_ingot"), ExtResource("11_iron_sword"), ExtResource("11_iron_pickaxe"), ExtResource("12_iron_axe"), ExtResource("13_berry"), ExtResource("20_herb_bandage"), ExtResource("20_trail_ration"), ExtResource("20_healing_potion"), ExtResource("20_vigor_draught"), ExtResource("20_power_cell"), ExtResource("20_repair_kit"), ExtResource("21_power_core"), ExtResource("21_thermal_underwear")])
 metadata/_custom_type_script = "uid://blddwnm4sv71x"

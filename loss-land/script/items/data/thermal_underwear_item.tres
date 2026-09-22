@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_tu"]
+[ext_resource type="Texture2D" uid="uid://btherm0wear01" path="res://art/icons/thermal_underwear.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_tu")
+item_id = &"thermal_underwear"
+display_name = "保暖内衣"
+description = "粗织的贴身衣物，贴身穿能挡些寒气。
+装备到护甲槽：防御+2。
+来源：装备核心后解锁的「核心」制作栏。
+（保暖机制规划中，目前只提供防御。）"
+item_type = 7
+rarity = 1
+stackable = false
+max_stack = 1
+equip_slot = 2
+defense_bonus = 2
+buy_price = 30
+sell_price = 12
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

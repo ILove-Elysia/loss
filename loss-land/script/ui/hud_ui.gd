@@ -50,7 +50,9 @@ signal minimap_toggled()
 ## 状态栏初始值（会被 Player 系统的实际值覆盖）
 @export var current_health: int = 100
 @export var max_health: int = 100
+## 自身电量（内置电量角色才有）与核心电量（装着带电池的核心才有）是两块电池
 @export var current_power: int = 100
+@export var current_core_power: int = 0
 @export var current_temperature: int = 30
 @export var current_hunger: int = 100
 
@@ -70,15 +72,29 @@ var _inventory: Inventory = null
 
 ## 状态栏的 Label 节点引用（用于更新显示文本）
 var _health_label: Label
+## 状态栏面板本体：行数会变（有无核心行），需要重算高度
+var _status_panel: PanelContainer
+
+## 电量有**两条独立的行**（用户决策 2026-09-16）：
+##   ⚡ 自身电量 —— 内置电量（机器人）常驻；两者都没有时退化为灰暗占位
+##   🔋 核心电量 —— 装着带电池的核心（动力核心等）时才出现
+## 两块电池各算各的，不合并显示。
 var _power_label: Label
-## 电量行是否"亮起"（true = 显示真实电量，false = 灰暗占位）。
+var _core_power_label: Label
+
+## 自身电量行是否"亮起"（true = 显示真实电量，false = 灰暗占位）。
 ## 初值取自角色注册表，运行时由 PlayerVitals._push_hud() → set_power_active() 纠正，
 ## 所以不依赖 HUD 与 Vitals 谁先 _ready。
 var _power_row_active: bool = false
+## 核心电量行是否显示（装着带电池的核心 → true）。
+## 同样由 PlayerVitals._push_hud() → set_core_active() 推过来。
+var _core_row_active: bool = false
 
 ## 电量行两种配色：亮起时暖黄（能量感），占位时半透明灰（明确"未启用"）
 const POWER_ROW_ACTIVE_COLOR: Color = Color(1.0, 0.9, 0.45)
 const POWER_ROW_IDLE_COLOR: Color = Color(0.62, 0.62, 0.62, 0.7)
+## 核心电量行的配色：青蓝，与自身电量的暖黄区分开，一眼看出是"设备电池"
+const CORE_ROW_COLOR: Color = Color(0.45, 0.85, 1.0)
 var _temperature_label: Label
 var _hunger_label: Label
 
@@ -233,13 +249,21 @@ func update_health(health: int, max_h: int) -> void:
 		low = (float(health) / float(max_h)) <= FilterSystem.LOW_HEALTH_RATIO
 	FilterSystem.set_low_health(low)
 
-## 更新电量显示
+## 更新电量显示（自身电量：内置电量角色才有）
 ## 调用方式：hud.update_power(current)
 ## 占位态（无电量）时数值不外露，所以统一交给 _refresh_power_row 决定文字
 ## @param power 当前电量值（0-100）
 func update_power(power: int) -> void:
 	current_power = power
 	_refresh_power_row()
+
+## 更新核心电量显示
+## 调用方式：hud.update_core_power(current)
+## 核心电量行只在装着带电池的核心时可见，文字刷新见 _refresh_core_row
+## @param power 核心当前电量（0-100）
+func update_core_power(power: int) -> void:
+	current_core_power = power
+	_refresh_core_row()
 
 ## 更新体温显示
 ## 调用方式：hud.update_temperature(current)
@@ -278,6 +302,7 @@ func get_hotbar_slot(index: int) -> ItemSlotUI:
 func refresh_all_status() -> void:
 	update_health(current_health, max_health)
 	update_power(current_power)
+	update_core_power(current_core_power)
 	update_temperature(current_temperature)
 	update_hunger(current_hunger)
 
@@ -454,28 +479,47 @@ func _on_inv_cleared() -> void:
 # 状态栏面板相关
 # ----------------------------------------
 
-## 本局角色**开局**是否带电量系统（大纲 v0.7 · 2.2.3：仅机器人为 true）。
-## 只用来给电量行一个初值；装上 / 拆下动力核心后的真实状态由 PlayerVitals
+## 本局角色**开局**是否自带（内置）电量（大纲 v0.7 · 2.2.3：仅机器人为 true）。
+## 只用来给电量行一个初值；装上 / 拆下核心后的真实状态由 PlayerVitals
 ## 通过 set_power_active() 推过来，所以这里读静态注册表就够，不必每帧查询。
-func _has_power_system() -> bool:
-	return CharacterRegistry.has_power(CharacterRegistry.get_active_id())
+func _has_embedded_power() -> bool:
+	return CharacterRegistry.has_embedded_power(CharacterRegistry.get_active_id())
 
 
-## 电量行「占位 ↔ 亮起」切换。由 PlayerVitals._push_hud() 在状态变化时调用。
-## 装上动力核心（含冒险家 / 魔女）→ true；拆除 → false；机器人恒 true。
+## 自身电量行「占位 ↔ 亮起」切换。由 PlayerVitals._push_hud() 在状态变化时调用。
+## 只有内置电量（机器人）会亮起；冒险家 / 魔女没有自身电量，这行是占位。
 func set_power_active(active: bool) -> void:
 	if _power_row_active == active:
 		return
 	_power_row_active = active
+	_refresh_status_rows()
+
+
+## 核心电量行「隐藏 ↔ 显示」切换。装着带电池的核心时为 true。
+func set_core_active(active: bool) -> void:
+	if _core_row_active == active:
+		return
+	_core_row_active = active
+	_refresh_status_rows()
+
+
+## 按当前状态把两条电量行一起刷新（行数可能变化，所以顺带重算面板高度）
+func _refresh_status_rows() -> void:
 	_refresh_power_row()
+	_refresh_core_row()
+	_update_status_panel_size()
 
 
-## 按当前状态刷新电量行的文字与配色。
+## 刷新"自身电量行"的文字与配色。
 ## 亮起 = 真实数值 + 暖黄；占位 = "⚡ --" + 灰。
-## 两种状态都保留这一行的尺寸（Label 始终可见），所以面板高度恒定、不会跳。
+##
+## 占位行只在**两条行都没有**时出现（没有自身电量、也没有核心）：
+## 此时保留这一行是为了维持"未启用"的既有观感；
+## 有核心行时自身行直接隐藏，免得面板上挂着一个没意义的 "⚡ --"。
 func _refresh_power_row() -> void:
 	if _power_label == null:
 		return
+	_power_label.visible = _power_row_active or not _core_row_active
 	if _power_row_active:
 		_power_label.text = "⚡ %d" % current_power
 		_power_label.add_theme_color_override("font_color", POWER_ROW_ACTIVE_COLOR)
@@ -484,12 +528,35 @@ func _refresh_power_row() -> void:
 		_power_label.add_theme_color_override("font_color", POWER_ROW_IDLE_COLOR)
 
 
+## 刷新"核心电量行"。没有核心时整行隐藏（不是占位）：
+## 它的出现本身就代表"装上了核心"，留着空行反而让人以为坏了。
+func _refresh_core_row() -> void:
+	if _core_power_label == null:
+		return
+	_core_power_label.visible = _core_row_active
+	if _core_row_active:
+		_core_power_label.text = "🔋 %d" % current_core_power
+		_core_power_label.add_theme_color_override("font_color", CORE_ROW_COLOR)
+
+
+## 行数变化后重算面板高度。
+##
+## PanelContainer 的高度由内容撑开，但它的 size 不会自己重算 ——
+## 创建时用 offset_bottom 定死的话，多一行就会溢出、少一行会留一大块空白。
+## custom_minimum_size 钉住宽度，reset_size 只负责把高度收到内容尺寸。
+func _update_status_panel_size() -> void:
+	if _status_panel == null:
+		return
+	_status_panel.reset_size()
+
+
 ## 创建左下角状态栏面板
 ## 显示内容：电量⚡（仅机器人）、生命值♥、体温🌡、饱食度🍖
 ## 面板采用半透明黑色背景，圆角设计
 func _create_status_panel() -> void:
 	# 创建面板容器
-	var panel = PanelContainer.new()
+	_status_panel = PanelContainer.new()
+	var panel := _status_panel
 	panel.name = "StatusPanel"
 	
 	# 左上角（界面草图：状态栏在左上、小地图在右上）。
@@ -498,7 +565,9 @@ func _create_status_panel() -> void:
 	panel.offset_left = 20
 	panel.offset_right = 150   # 面板宽度 130
 	panel.offset_top = 20      # 距顶部 20px
-	panel.offset_bottom = 152  # 固定 4 行（电量行常驻占位，谁都不会少一行）
+	# 高度**不写死**：状态栏有 4~5 行（核心电量行可有可无），
+	# 由 _update_status_panel_size() 按内容收；这里只钉住宽度。
+	panel.custom_minimum_size = Vector2(130, 0)
 
 	# 面板只是显示，不参与点击，否则左下角一片区域会挡住 3D 操作
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -519,21 +588,25 @@ func _create_status_panel() -> void:
 	vbox.add_theme_constant_override("separation", 8)  # 标签间距8像素
 	panel.add_child(vbox)
 	
-	# ----- 电量标签（常驻占位）-----
-	# 大纲 v0.7 · 2.2.3：电量默认只有机器人有，其余角色可装入「动力核心」解锁。
-	# 这里**不做增删行**，而是让这一行**永远占着位置**，只切换内容与配色：
-	#   内置电量（机器人）→ 常驻显示，不可关闭
-	#   外置电量（装有动力核心）→ 亮起显示
-	#   无电量 → 灰暗占位 "⚡ --"
-	# 为什么用占位而不是 visible=false：隐藏的控件会被 VBoxContainer 完全忽略尺寸，
-	# 面板会跟着变矮；而装上核心时面板又要长高 —— 一行位置忽有忽无更难看，
-	# 且面板高度写死在 offset 上（见下方 offset_bottom），行数变化还会溢出。
-	# 占位就让高度恒定，运行时只改文字和颜色，零布局风险。
+	# ----- 自身电量标签（占位或真实数值）-----
+	# 大纲 v0.7 · 2.2.3：电量默认只有机器人有，其余角色靠装入「动力核心」获得。
+	# 这一行代表"**自身**电量"（机械身体自带的电量，只有机器人有）：
+	#   机器人 → 常驻显示真实电量
+	#   其余角色 → 灰暗占位 "⚡ --"（有核心行时整行隐藏，避免挂一个没意义的占位）
+	# 两块电池是分开的两行，核心那行见下方 _core_power_label。
 	_power_label = Label.new()
 	_power_label.add_theme_font_size_override("font_size", 18)  # 字体大小18
 	vbox.add_child(_power_label)
-	_power_row_active = _has_power_system()
-	_refresh_power_row()
+
+	# ----- 核心电量标签（没有核心时整行隐藏）-----
+	# 核心是独立单位，电量属于它自己：装上一枚核心就多出这一行，
+	# 拆下来这行就消失。它的可见性由 PlayerVitals._push_hud() 推过来。
+	_core_power_label = Label.new()
+	_core_power_label.add_theme_font_size_override("font_size", 18)
+	_core_power_label.add_theme_color_override("font_color", CORE_ROW_COLOR)
+	vbox.add_child(_core_power_label)
+
+	_power_row_active = _has_embedded_power()
 	
 	# ----- 生命值标签 -----
 	_health_label = Label.new()
@@ -552,6 +625,10 @@ func _create_status_panel() -> void:
 	_hunger_label.text = "🍖 %d" % current_hunger
 	_hunger_label.add_theme_font_size_override("font_size", 18)
 	vbox.add_child(_hunger_label)
+
+	# 所有行都建好之后再统一刷一次：行数（有没有核心那行）决定面板高度，
+	# 早于最后一行调用 reset_size 会量到不完整的内容尺寸。
+	_refresh_status_rows()
 
 # ----------------------------------------
 # 操作提示相关

@@ -1,12 +1,12 @@
 [gd_scene format=3 uid="uid://fgvu0ochdchi"]
 
 [ext_resource type="Script" uid="uid://slime001" path="res://script/ai/enemy/mob/slime.gd" id="1_slime"]
-[ext_resource type="Texture2D" uid="uid://b8o4pupwtgvoq" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Attack.png" id="2_vi4k8"]
-[ext_resource type="Texture2D" uid="uid://vxnef6dckd65" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Die.png" id="3_uw4y3"]
-[ext_resource type="Texture2D" uid="uid://f82d8r1l1ubv" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Hit.png" id="4_yrvbh"]
-[ext_resource type="Texture2D" uid="uid://cdywtjmthlt5t" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Idle.png" id="5_1t23e"]
-[ext_resource type="Texture2D" uid="uid://bl3s2b3fcdlvr" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Stun.png" id="6_3o2se"]
-[ext_resource type="Texture2D" uid="uid://b56uypmrl772q" path="res://art/art/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Run.png" id="7_jghbk"]
+[ext_resource type="Texture2D" uid="uid://b8o4pupwtgvoq" path="res://art/enemies/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Attack.png" id="2_vi4k8"]
+[ext_resource type="Texture2D" uid="uid://vxnef6dckd65" path="res://art/enemies/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Die.png" id="3_uw4y3"]
+[ext_resource type="Texture2D" uid="uid://f82d8r1l1ubv" path="res://art/enemies/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Hit.png" id="4_yrvbh"]
+[ext_resource type="Texture2D" uid="uid://cdywtjmthlt5t" path="res://art/enemies/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Idle.png" id="5_1t23e"]
+[ext_resource type="Texture2D" uid="uid://bl3s2b3fcdlvr" path="res://art/enemies/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Stun.png" id="6_3o2se"]
+[ext_resource type="Texture2D" uid="uid://b56uypmrl772q" path="res://art/enemies/Forest_Monsters_FREE/Mushroom/Mushroom with VFX/Mushroom-Run.png" id="7_jghbk"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_bhm4b"]
 atlas = ExtResource("2_vi4k8")

@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://drkoq7x6qkejo"]
 
-[ext_resource type="Texture2D" uid="uid://b2jy0gdl7lb2v" path="res://art/player/char_blue.png" id="1_7j80i"]
+[ext_resource type="Texture2D" uid="uid://b2jy0gdl7lb2v" path="res://art/player/adventurer/char_blue.png" id="1_7j80i"]
 [ext_resource type="Script" uid="uid://dwslhqdnidaik" path="res://script/player/physics.gd" id="1_7omxl"]
 [ext_resource type="Script" uid="uid://btim5rl33bcbf" path="res://script/player/camera_3d.gd" id="2_3c7ea"]
 [ext_resource type="Script" uid="uid://b6vy6q256gmvk" path="res://script/player/vitals.gd" id="4_vitals"]
@@ -142,6 +142,14 @@ region = Rect2(336, 114, 56, 57)
 atlas = ExtResource("1_7j80i")
 region = Rect2(392, 114, 56, 57)
 
+[sub_resource type="AtlasTexture" id="AtlasTexture_hrv0"]
+atlas = ExtResource("1_7j80i")
+region = Rect2(0, 168, 56, 56)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_hrv1"]
+atlas = ExtResource("1_7j80i")
+region = Rect2(56, 168, 56, 56)
+
 [sub_resource type="SpriteFrames" id="SpriteFrames_hl5qd"]
 animations = [{
 "frames": [{
@@ -264,6 +272,20 @@ animations = [{
 "loop": 1,
 "name": &"walk",
 "speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_hrv1")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_hrv0")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_hrv1")
+}],
+"loop": 0,
+"name": &"harvest",
+"speed": 5.0
 }]
 
 [node name="player" type="Node3D" unique_id=244025735 groups=["player"]]

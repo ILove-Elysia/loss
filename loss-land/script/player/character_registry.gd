@@ -20,6 +20,9 @@
 #      （448×392，8 列 × 7 行，单帧 56×56，动画顺序 attack/die/hurt/idle/walk）
 #      换色变体（char_red / char_green）就是按这个布局生成的，
 #      所以切换角色只需换贴图，SpriteFrames 里的帧区一个都不用动。
+#      **路径约定：一个角色一个目录，贴图放 art/player/<角色id>/ 下**，
+#      不要平铺在 art/player/ 根目录——角色一多就分不清哪张是谁的。
+#      （映射表见 art/player/README.md）
 #   3. 面板是遍历 CHARACTERS 动态生成的，不用改 UI 代码。
 # ============================================
 
@@ -81,11 +84,12 @@ const PORTRAIT_REGION: Rect2 = Rect2(0, 0, 56, 56)
 ##   speed_mult        移速倍率（乘在 physics.gd 的 speed 上）
 ##   base_health       最大生命值
 ##   attack_mult       攻击力倍率（乘在 physics.gd 的 attack_damage 上）
-##   has_power         **是否有电量系统**（大纲 2.2.3：仅机器人为 true）。
-##                     决定 HUD 电量行是"亮起"还是"占位"、过冷过热是否额外漏电。
+##   has_power         **开局是否有电量**（大纲 2.2.3：仅机器人为 true）。
+##                     决定 HUD 自身电量行是"亮起"还是"占位"。
 ##                     ⚠ 它**不决定**回血 / 掉血 / 减速 —— 那三条归 power_embedded。
-##                     冒险家 / 魔女为 false，
-##                     但可拾取「动力核心」解锁（大纲 3.1.3）→ 运行时可变，见 vitals.set_has_power()。
+##                     冒险家 / 魔女为 false，但可装「动力核心」获得电（大纲 3.1.3）。
+##                     ⚠ 运行时"到底有没有电可用"读 **vitals.has_power**（只读计算属性
+##                     = power_embedded 或 装着带电池的核心），不要拿本表的开局值当实时状态。
 ##   power_embedded    **电量是否内置**（机器人机械身体自带，仅 robot 为 true）。
 ##                     这是"电量能否影响人物本体"的总闸门：
 ##                       内置（机器人）：电量是它的生命线 → 不可关闭、
@@ -104,7 +108,7 @@ const CHARACTERS: Array = [
 		"name": "冒险家",
 		"desc": "靠双手与头脑在荒岛立足的生存者。没有电量负担，是规则的基准角色。",
 		"trait": "基准 · 无电量",
-		"sprite": "res://art/player/char_blue.png",
+		"sprite": "res://art/player/adventurer/char_blue.png",
 		"speed_mult": 1.0,
 		"base_health": 100,
 		"attack_mult": 1.0,
@@ -118,7 +122,7 @@ const CHARACTERS: Array = [
 		"name": "魔女",
 		"desc": "用草药与符文改写规则的法术使用者。制药与魔法的深度仍待定（决策 ⑤）。",
 		"trait": "制药魔法 · 无电量",
-		"sprite": "res://art/player/char_green.png",
+		"sprite": "res://art/player/witch/char_green.png",
 		"speed_mult": 1.0,
 		"base_health": 100,
 		"attack_mult": 1.0,
@@ -132,7 +136,7 @@ const CHARACTERS: Array = [
 		"name": "机器人",
 		"desc": "以电力驱动的机械生命。多一条电量补给线，也多背一份过冷过热的漏电惩罚。",
 		"trait": "电量系统 · 双份惩罚",
-		"sprite": "res://art/player/char_red.png",
+		"sprite": "res://art/player/robot/char_red.png",
 		"speed_mult": 1.0,
 		"base_health": 100,
 		"attack_mult": 1.0,
@@ -142,12 +146,19 @@ const CHARACTERS: Array = [
 		"default_unlocked": false,
 	},
 	# ---------------- 测试角色（决策 ①：本期保留，正式版再删） ----------------
+	# ⚠ 这三个角色的 sprite 指向的是**正式角色的目录**——它们没有自己的美术，
+	#   只是借用了三张换色表来验证换装 / 数值 / 存档流程：
+	#      knight → adventurer/char_blue.png
+	#      guard  → robot/char_red.png
+	#      scout  → witch/char_green.png
+	#   将来给它们各自出图后，新建 art/player/knight/ 等目录并改这里的路径即可。
+	#   详见 art/player/README.md 的角色 ↔ 贴图映射表。
 	{
 		"id": "knight",
 		"name": "青铠骑士（测试）",
 		"desc": "测试角色：验证换装 / 数值 / 存档流程用，正式版会删除。",
 		"trait": "测试 · 均衡",
-		"sprite": "res://art/player/char_blue.png",
+		"sprite": "res://art/player/adventurer/char_blue.png",
 		"speed_mult": 1.0,
 		"base_health": 100,
 		"attack_mult": 1.0,
@@ -160,7 +171,7 @@ const CHARACTERS: Array = [
 		"name": "赤铁守卫（测试）",
 		"desc": "测试角色：高血高攻但走得慢，用来验证数值差异是否生效。",
 		"trait": "测试 · 高血高攻慢",
-		"sprite": "res://art/player/char_red.png",
+		"sprite": "res://art/player/robot/char_red.png",
 		"speed_mult": 0.9,
 		"base_health": 130,
 		"attack_mult": 1.3,
@@ -173,7 +184,7 @@ const CHARACTERS: Array = [
 		"name": "翠影斥候（测试）",
 		"desc": "测试角色：高速低血，用来验证数值差异是否生效。",
 		"trait": "测试 · 高速低血",
-		"sprite": "res://art/player/char_green.png",
+		"sprite": "res://art/player/witch/char_green.png",
 		"speed_mult": 1.25,
 		"base_health": 80,
 		"attack_mult": 0.85,

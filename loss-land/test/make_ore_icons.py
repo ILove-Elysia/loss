@@ -164,25 +164,6 @@ def make_pickaxe() -> Canvas:
 	return c
 
 
-def make_crude_axe() -> Canvas:
-	# 粗制石斧：粗糙石片 + 草绳绑扎，开局第一把斧头
-	c = Canvas()
-	stone = rgb(0.58, 0.58, 0.62)
-	stone_dark = rgb(0.42, 0.42, 0.47)
-	grip = rgb(0.50, 0.34, 0.20)
-	bind = rgb(0.30, 0.62, 0.28)
-	# 木柄：左下到右上
-	c.line(9, 27, 21, 12, grip, 2)
-	# 石刃：绑在柄顶端的粗糙石片
-	c.rect(18, 4, 27, 12, stone)
-	c.cut_corners(18, 4, 27, 12, 2)
-	c.line(18, 12, 27, 12, stone_dark, 1)
-	# 草绳绑扎：两道绿色斜线压在石刃与柄的交界处
-	c.line(17, 11, 24, 14, bind, 1)
-	c.line(19, 13, 26, 16, bind, 1)
-	return c
-
-
 def make_iron_axe() -> Canvas:
 	# 铁斧：与粗制石斧同构，但刃是亮铁 + 外沿开刃
 	c = Canvas()
@@ -283,7 +264,6 @@ def main() -> None:
 		"iron_ingot": make_ingot,
 		"iron_sword": make_sword,
 		"iron_pickaxe": make_pickaxe,
-		"crude_axe": make_crude_axe,
 		"iron_axe": make_iron_axe,
 		"berry": make_berry,
 	}

@@ -62,6 +62,8 @@ func save_records(records: Array) -> Dictionary:
 			"position": {"x": p.x, "y": p.y, "z": p.z},
 			"state": int(item.get("state", 0)),
 			"regen_time_remaining": float(item.get("regen_remaining", 0.0)),
+			# 剩余工作量（砍了一半的树）；老档没这个键 = 满工作量
+			"work_remaining": float(item.get("work_remaining", 0.0)),
 		})
 
 	# 返回完整的存档结构

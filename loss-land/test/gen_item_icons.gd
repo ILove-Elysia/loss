@@ -28,9 +28,7 @@ func _initialize() -> void:
 	_make_rock()
 	_make_stick()
 	# 工具（斧头/镐子共用画法，只换头部颜色）
-	_make_axe(Color(0.62, 0.45, 0.26), "wooden_axe.png")
 	_make_axe(Color(0.58, 0.59, 0.63), "stone_axe.png")
-	_make_pick(Color(0.62, 0.45, 0.26), "wooden_pickaxe.png")
 	_make_pick(Color(0.58, 0.59, 0.63), "stone_pickaxe.png")
 	# 武器
 	_make_sword(Color(0.68, 0.52, 0.30), "wooden_sword.png")

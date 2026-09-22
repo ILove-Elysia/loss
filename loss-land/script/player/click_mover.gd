@@ -213,7 +213,7 @@ func _physics_process(_delta: float) -> void:
 		_set_pending(null)
 		return
 
-	# 进入采集范围 → 停下采集（树 0.8 秒采集时长由资源侧 harvest() 自己处理）
+	# 进入采集范围 → 停下采集（要砍几下、每下多久由资源侧 harvest() 自己处理）
 	var dist := _horizontal_dist(_pending_resource.global_position, _physics.global_position)
 	if dist <= ResourceManager.INTERACT_RANGE:
 		var res := _pending_resource

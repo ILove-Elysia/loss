@@ -154,14 +154,14 @@ func _test_exclusive_categories() -> void:
 
 func _test_insufficient() -> void:
 	_inventory.clear()
-	_give(&"log", 1)  # 木斧需要 3 根，只给 1 根
-	var recipe := CraftingSystem.find_recipe(&"wooden_axe")
-	_check(recipe != null, "找到木斧配方")
-	_check(not CraftingSystem.can_craft(recipe, _inventory), "木材不足时 can_craft=false")
+	_give(&"stick", 1)  # 木剑需要 2 根，只给 1 根
+	var recipe := CraftingSystem.find_recipe(&"wooden_sword")
+	_check(recipe != null, "找到木剑配方")
+	_check(not CraftingSystem.can_craft(recipe, _inventory), "木棍不足时 can_craft=false")
 	var made: int = CraftingSystem.craft(recipe, _inventory)
-	_check(made == 0, "木材不足时 craft 返回 0（实际 %d）" % made)
-	_check(_inventory.get_item_count(&"log") == 1, "材料未被扣除（仍为 1 根木材）")
-	_check(_inventory.get_item_count(&"wooden_axe") == 0, "没有产出木斧")
+	_check(made == 0, "木棍不足时 craft 返回 0（实际 %d）" % made)
+	_check(_inventory.get_item_count(&"stick") == 1, "材料未被扣除（仍为 1 根木棍）")
+	_check(_inventory.get_item_count(&"wooden_sword") == 0, "没有产出木剑")
 
 
 func _test_craft_stick() -> void:

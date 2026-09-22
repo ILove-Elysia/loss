@@ -7,7 +7,7 @@
 #   [2] ItemDrop.spawn_item_by_id 生成掉落物
 #   [3] 拾取：走近 → 掉落物入背包（直接调 try_pickup 模拟 Area 信号）
 #   [4] 背包满时拾取：部分入包、剩余留地
-#   [5] 使用电池：ItemEffects → vitals.add_power → 电量 +10、数量 -1
+#   [5] 使用电池：ItemEffects → vitals.add_power → 自身电量 +10 且核心电量 +10
 #   [6] 使用不可用物品（凝胶）：无效果、不消耗
 #
 # 注意：本测试用 mock 玩家（Node3D + Inventory + Vitals），
@@ -20,6 +20,7 @@ var _failures: int = 0
 var _player: Node3D = null
 var _inventory: Node = null
 var _vitals: Node = null
+var _equipment: Node = null
 
 
 func _initialize() -> void:
@@ -76,10 +77,23 @@ func _setup_mock_player() -> void:
 	_inventory.max_slots = 3  # 故意小，方便测背包满
 	_player.add_child(_inventory)
 
+	# 装备槽：电池补的是"身上的电"，其中一块就装在核心槽里。
+	_equipment = preload("res://script/player/equipment.gd").new()
+	_equipment.name = "Equipment"
+	_player.add_child(_equipment)
+
 	_vitals = preload("res://script/player/vitals.gd").new()
 	_vitals.name = "Vitals"
 	_player.add_child(_vitals)
 	await process_frame  # 等 _ready 跑完（初始化槽位）
+
+	# 默认角色（冒险家）既没有自身电量、也没装核心 —— 电池会"无处可充"。
+	# 这里把它设成内置电量语义（模拟机器人）并装一枚核心，
+	# 让 [5] 能同时验证"同一颗电池把两块电池各充一次"。
+	_vitals.power_embedded = true
+	_inventory.add_item(ItemRegistry.get_registry().get_item(&"power_core"), 1)
+	_equipment.equip(&"power_core")
+	await process_frame
 
 
 func _test_registry() -> void:
@@ -134,8 +148,11 @@ func _test_full_inventory() -> void:
 
 
 func _test_use_battery() -> void:
-	# 先把电量耗到 50
+	# 先把两块电池都放掉一点：自身电量 50、核心 30
 	_vitals.set_power(50.0)
+	var core: PowerCoreInstance = _equipment.get_core_instance()
+	_check(core != null, "核心槽里有一枚核心")
+	core.power = 30.0
 
 	# 使用背包里的电池（动态找电池所在格）
 	var battery_slots: Array[int] = _inventory.find_item_slots(&"battery")
@@ -144,7 +161,8 @@ func _test_use_battery() -> void:
 	_check(item != null and item.data.item_id == &"battery", "找到电池实例")
 	var applied: bool = ItemEffects.apply(item.data, _player)
 	_check(applied, "电池使用生效")
-	_check(_vitals.current_power == 60.0, "电量 50 → 60（实际 %.1f）" % _vitals.current_power)
+	_check(_vitals.current_power == 60.0, "自身电量 50 → 60（实际 %.1f）" % _vitals.current_power)
+	_check(is_equal_approx(core.power, 40.0), "核心电量 30 → 40（同一颗电池两块都充）")
 
 	# 完整使用路径：use_effect 解析
 	var power: float = ItemEffects._parse_amount("+10_power", "_power")

@@ -33,9 +33,19 @@
 class_name Slime
 extends CharacterBody3D
 
+# 用 preload 而不用全局类名 SpriteFacing：全局类名依赖 .godot 的类缓存，
+# 新建脚本若还没被编辑器扫描登记，运行时就会报"找不到类"。
+# preload 是编译期常量，不走那份缓存。详见 script/visual/sprite_facing.gd
+const Facing := preload("res://script/visual/sprite_facing.gd")
+
 # ============================================
 # 导出变量 - 可在编辑器中修改
 # ============================================
+
+## 贴图朝向相机的俯角补偿比例。
+## 1.0 = 完全正对镜头（拉远拉近时史莱姆在屏幕上的高度不变）；
+## 0.0 = 不补偿，只跟相机的水平方向（拉远时会被透视压扁）。
+@export_range(0.0, 1.0, 0.05) var billboard_tilt: float = 1.0
 
 ## 最大生命值
 @export var max_health: int = 30
@@ -129,7 +139,8 @@ var _attack_cooldown_timer: float = 0.0
 ## 调试计时器（每0.5秒打印一次距离）
 var _debug_timer: float = 0.0
 
-## 是否面向左侧
+## 是否正往**屏幕左边**走（不是 world X 的负方向，判据见 _update_facing）
+## ⚠ 与 sprite.flip_h 同值，这个脚本里两者一致；玩家脚本里两者相反。
 var _facing_left: bool = false
 
 ## 当前攻击目标（用于动画结束后造成伤害）
@@ -491,22 +502,39 @@ func _process_chase(delta: float) -> void:
 # 朝向控制
 # ============================================
 
-## 让史莱姆始终面向摄像机
+## 让史莱姆贴图始终正对摄像机（含俯角补偿）
+##
+## 只转 Visual 子节点，不转史莱姆本体：
+##   Visual 里只有贴图，转它没有副作用；而本体上挂着碰撞体、受击 Hitbox、
+##   NavigationAgent3D，转本体会把它们一起转掉（眼下都是圆柱 / 全局坐标，
+##   没坏，但没有任何好处，还容易被后续改动踩到）。
+##
+## 为什么不用 look_at(摄像机方向)：那样只跟相机的水平方向（yaw），
+## 不跟俯角（pitch）。相机拉到 60° 俯角时，竖直的贴图被透视压缩到只剩一半高，
+## 推近拉远时史莱姆会忽大忽小。改用 SpriteFacing 后屏幕高度恒定。
 func _look_at_camera() -> void:
-	var cam = get_viewport().get_camera_3d()
-	if cam:
-		var look_dir = cam.global_position - global_position
-		look_dir.y = 0
-		if look_dir.length() > 0.001:
-			_look_at_direction(look_dir.normalized())
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or visual == null or not is_instance_valid(visual):
+		return
+	var t := visual.global_transform
+	t.basis = Facing.facing_basis(cam, billboard_tilt)
+	visual.global_transform = t
 
 
-## 让史莱姆朝向指定方向
+## 记录朝向
 ## @param direction 目标方向（水平面，已归一化）
 func _look_at_direction(direction: Vector3) -> void:
-	if direction.length() > 0.001:
-		look_at(global_position + direction, Vector3.UP)
-		sprite.flip_h = direction.x > 0
+	if direction.length() <= 0.001:
+		return
+	# 不再旋转本体：贴图朝向由 _look_at_camera() 统一接管（始终正对镜头），
+	# 这里若再 look_at(玩家) 就会和它打架 —— 追击时贴图转向玩家、
+	# 脱离追击又转回相机，玩家看到的是史莱姆在左右乱扭。
+	# 史莱姆只有一张正面贴图，左右朝向只能靠 flip_h 表达。
+	# 翻转的唯一实现在 _update_facing()，这里只负责把方向交给它 ——
+	# 以前这里和 _update_facing() 各写一套、判据还正好相反
+	# （这里 direction.x > 0，那里 direction.x < 0），追击时一套、
+	# 停下来时另一套，表现就是"走近玩家的一瞬间左右翻一下"。
+	_update_facing(direction)
 
 # ============================================
 # 移动与攻击
@@ -615,9 +643,34 @@ func _is_position_on_land(world_pos: Vector3) -> bool:
 	return gen.is_land_world(world_pos)
 
 
-## 更新面向方向
+## 更新面向方向（**翻转的唯一实现**，追击和移动两条路都走它）
+##
+## 判据是"**屏幕**左还是右"，不是世界 X：
+##   贴图是一块永远正对镜头的广告牌，玩家看到的左右就是屏幕的左右。
+##   以前用 direction.x（世界 X），玩家拿 Q/E 把镜头转 90° 之后左右就反了 ——
+##   镜头转一次、史莱姆的左右跟着错一次。
+##
+## ⚠ 符号与玩家相反，别照抄 physics.gd：
+##   player.tscn 里的 BaseBody 烘了"180° 旋转 + flip_v = true"，
+##   两者抵消后净剩**一次水平镜像**，所以玩家那边是 flip_h = not facing_left；
+##   而史莱姆的 Sprite 是干净的单位变换，没有那次镜像，
+##   所以这里是 flip_h = facing_left。
+##   （2026-09-22 朝向由 look_at(相机方向) 换成 SpriteFacing 时，
+##     视觉那一层从"从背面看（多一次镜像）"变成"从正面看"，
+##     两个脚本的符号都必须跟着取反，玩家那边漏了 → 人物左右反了。）
 func _update_facing(direction: Vector3) -> void:
-	_facing_left = direction.x < 0
+	var d := Vector3(direction.x, 0.0, direction.z)
+	if d.length_squared() <= 0.000001:
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cam_right := cam.global_basis.x
+	cam_right.y = 0.0
+	if cam_right.length_squared() <= 0.000001:
+		return
+	# 点积 < 0 ⇒ 目标方向落在镜头右方向的背面 ⇒ 正在往屏幕左边走
+	_facing_left = d.dot(cam_right) < 0.0
 	sprite.flip_h = _facing_left
 
 

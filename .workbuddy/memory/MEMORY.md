@@ -1,74 +1,47 @@
-# 项目长期记忆（loss-land / 失落之岛）
+# 项目长期记忆（loss-land）
 
-> 设定（大纲 2026-09-14 纯净版，正文不含版本号）：正式角色＝冒险家/魔女/机器人，**数值全同**（HP100/移速×1.0/攻击×1.0），差异全在系统。电量默认仅机器人；另两位拾「动力核心」装入解锁（可拆）。过冷/过热**所有角色扣血**，有电量者再漏电。**回血＝吃食物**（浆果 +25_food +10HP），**自然回血仅内置电量（robot）**。冒险家开局可选、另两位游戏内解锁，开发期 `ALL_UNLOCKED=true`。测试角色 knight/guard/scout 本期保留。旧设定「织星者/大静默」搁置。**主线（大纲第五章，规划中）**：沙地区＝沙虫（巢穴→沙虫→巢穴坍塌→地下实验室→机械沙虫）；丛林区＝巨鸟（巨树→巨鸟→特殊种子→藤蔓→巨树之上）。两 Boss 共同规则：**濒死不杀（保留 1 血+无敌逃走）**、**脱战回满血**、场地永久变化（巢穴坍塌）。
-> 铁律如下，过程见每日日志。
->
-> **`loss-land/大纲.md` 的定位（用户要求 2026-09-14）**：它是**给人看的游戏内容说明书**，不是开发日志。**禁止**写入：版本变更记录（v0.x 改动）、决策编号、「✔/○/◆」状态标记、代码文件名 / 字段名 / 函数名、待办清单、"踩过的坑"。**未实装内容统一写「（规划中）」**。开发过程、决策、接口契约放**每日日志**；纯技术设计（流式加载参数等）另开文档。改数值 / 机制后回写大纲，保持文档与游戏一致。整理前的旧版备份在 `.workbuddy/archive/`。
+> 2026-09-18 三次压缩。低频详章已拆到同目录 **`MEMORY-details.md`**（角色/温度/电量、建造/存档/UI、美术资产）——涉及这些领域时先读它。历史细则全文：`MEMORY.md.2026-09-18-full.bak`；过程记载：`2026-09-*.md` 日志。
 
-## 0. 排障
-- 本机无 Godot：改 .gd → `python test/gd_static_lint.py`（缩进/括号/不可见空白/class_name 缓存/Vector 成员/`:=` Variant）；改 .tres·物品·配方 → `test/check_data_refs.py`；最终实机确认。
-- `:=` 右侧是 Variant（`.get()`/`.call()`/`ProjectSettings.get_setting()`/无返回类型函数）→ 整脚本解析失败。新函数必写返回类型。
-- 取证目录 `Godot/app_userdata/loss_land/`。高频根因：绑定缺失、class_name 缓存未重扫、内部集合被清空、queue_free 延迟、控件 0×0、先设位置后入树。
-- Python 用 Bash 跑（PowerShell 起子进程被静默拦截），偶发 `fork: Permission denied`→重试。多会话并行先看 mtime；Edit 报 "modified since read"→重读再改。
-- F5 编辑器内嵌运行不可用（DisplayServer 拒 resize、后处理失效）→ 独立窗口；GraphicsConfig 用 `_can_control_window()`（`root.is_embedded()`）跳过窗口操作。
+## 铁律
+- `大纲.md`＝给人看的游戏说明书：禁版本号/状态标记/代码名/字段名/待办/踩坑；未实装写「（规划中）」；改数值后回写。过程与接口契约→每日日志。**待办清单在 `E:\GameMake\loss\待办.md`**（现有：电池对非机器人无效、保暖内衣保暖未做）。
+- **改 `.gd` 的 `@export` 字段（尤其删字段）必须先关 Godot 编辑器**：编辑器会用"中间态脚本"重新序列化 .tres 并落盘，无声吞掉当时脚本里不存在的字段（2026-09-22 事故：8 份资源 .tres 的 `resource_id`/`drop_item_id` 被吞 → `get_resource_scene(&"")` 取不到预制体 → 池为 null → 场上一个资源都没有，但记录层数据是有的）。铁证＝被编辑器保存的 .tres 会多出 `uid=`。**脚本改好不等于数据还在，改完必须跑 check_data_refs。**
+- **`check_data_refs.py` 报的每一条都要处理，不许标"历史遗留""与本次无关"跳过**——2026-09-22 那 16 条 `.tres 缺 resource_id` 就是线上 bug 本身，被放过后玩家进游戏看不到任何资源。
+- Godot **4.7.2**（2026-09-22 从运行日志核实，旧记忆写的 4.6 是错的）：`E:\SteamLibrary\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe`。改 .gd→`test/gd_static_lint.py`；改 .tres/.tscn→`test/check_data_refs.py`；最后实机。**编辑器开着别跑 headless**（抢 .godot）。**移出 .tscn/.tres 前必须先在编辑器里关掉它的标签页**——编辑器侦测到文件被外部删除会把内存里的场景重新落盘（已发生 3 次；`.godot/editor/editor_layout.cfg` 存着标签页，每次启动都恢复，所以要关标签页+重启，光改 .godot 没用：编辑器内存持有，退出会覆盖）。
+- **算「玩家到某物」距离必须取 `Physics` 子节点（或 `ViewFrustum.player_position()`），绝不读 `player` 根节点的 `global_position`**：player(Node3D 根)从不位移、永停在出生点，动的是它的 `Physics`(CharacterBody3D)。2026-09-22：采集中断判定读根节点 ⇒ 距离恒为"出生点→资源"(约59米) ⇒ 每下都判"走远" ⇒ 全资源采不动（旧一次性路径不查距离故一直没暴露）。ClickMover 的 `get_parent()` 就是根节点。
+- **手工写 `.tscn`：`@export` 的节点引用属性必须在节点头部写 `node_paths=PackedStringArray("属性名")`**，漏写则属性**静默 null 且不报错**。2026-09-22：tree.tscn 的 `Visual` 漏了 → `sprite` 恒 null → `has_art` 判 false，既叠出灰色兜底网格（树旁白方块）又让真精灵失控（采集完树不消失）。正例 map.tscn/player.tscn；最稳＝编辑器拖拽生成。
+- 查属性/枚举名→`raw.githubusercontent.com/godotengine/godot/4.7/doc/classes/<类>.xml`。写错属性名→_ready 抛错→灰屏，lint 查不出。
+- **运行时日志取证**：`C:\Users\chenx\AppData\Roaming\Godot\app_userdata\loss_land\logs\`（`godot.log` 是当次，历史按时间戳存）。分类开关在同目录 `debug_config.cfg`（`resource/player/item/build/...`），**默认 resource=false**，排查采集/生成问题先把它改成 true 再跑一次。存档 `saves/slot_N.json` 可直接用 Python 读（`world.resources.resources` 里每条有 resource_id/position/state）。
+- `:=` 右侧为 Variant 会报错（WARNING 当 ERROR）：`.get()`/`.call()`/无返回类型函数/双签名数学函数→floorf/roundf/absf；新函数必写返回类型。**但别把这条规则滥用到三角函数上**：4.x 里**只有同时存在 Variant 重载的函数才有 `f` 变体**，全部就 11 个＝absf/ceilf/clampf/floorf/lerpf/maxf/minf/roundf/signf/snappedf/wrapf；`sin/cos/tan/asin/acos/atan/atan2/sqrt/pow/exp/log/deg2rad/rad2deg` 从来只有 float 签名，**没有 sinf/asinf/sqrtf/powf**，写了直接 `Parser Error: Function "asinf" not found in base self` → 整份脚本解析失败（2026-09-22 sprite_facing.gd 事故：三方共用朝向求解器挂掉）。`gd_static_lint.py` 第 7 项专查这个。
+- 同文件多处 Edit 串行，改完 grep 复核；"modified since read"→重读。批量脚本改文件先 `cp` 后 `diff`；弱特征定位会命中错处→特征须含唯一内容；表格重排按显示宽度（east_asian_width W/F 计 2）。误改可救：`~/.workbuddy/file-history/<会话uuid>/<hash>@vN`，Grep 内容定位 hash 取上一 vN。
+- 核心系统＝class_name+static，不用 autoload；新增 class_name 手工补 `.godot/global_script_class_cache.cfg`（`gd_static_lint.py` 第 4 项会查），**或在使用处写 `const X := preload("res://…")` 直接绕开缓存**（编辑器开着时缓存可能未重扫，这样最稳）；移动 .gd 同步 5 处（.gd.uid/首行注释/.tscn ext_resource/test load()/class 缓存；`.godot/editor/*` 留旧路径别改）。
+- 数据表字符串标签≠已实装；枚举只能末尾追加（.tres 存数字）；对外集合 `.duplicate()`；只走 DebugConfig.log_msg/warn_msg。地形号 7海/8沙滩/10草原/11丛林/12矿区/13沙地/14火山/15雪地。取证目录 `Godot/app_userdata/loss_land/`。高频根因：绑定缺失/缓存未重扫/集合被清空/queue_free 延迟/控件 0×0/先设位置后入树。
+- 运行时 new 的控件禁用 `set_anchors_preset`（0×0 穿透）→显式 size/position；居中用 CenterContainer；autowrap Label 给确定正宽度；F5 内嵌运行不可用→独立窗口。
+- 查引用查全工程（预制体在 `tscn/prefab/`）；二进制 `.res` 内部字符串 grep 不到且带长度前缀→改路径长度会损坏，只能编辑器拖拽更新；引用者自身可能是死的（find_orphans 孤岛清单＝链已死）；引用图工具先排自引用。
+- 工具：`check_data_refs.py`（res:// 存在性+art/ 缺 .import）、`fix_import_paths.py`、`find_orphans.py`（**孤岛≠可删**）。流程：fix_import_paths→check_data_refs→find_orphans→gd_static_lint→实机。绝不 `cat` 大 .tres（72KB SaveTileSetRes）→head/grep；体积用 os.path.getsize（du -sk 虚报近一倍）。
+- **判断"某物品在游戏里是否可得"的唯一权威＝`script/crafting/crafting_system.gd` 配方表+掉落/初始背包，不是 `script/items/data/*.tres` 列表**。遗留 .tres 会长期挂在 `item_registry.tres` 且被测试脚本当夹具引用，看着像活的实为死数据（crude_axe/wooden_axe/wooden_pickaxe 就挂了很久，2026-09-18 才删）。**加档位/写进说明书前先查配方表**。
+- **删一件物品要同步 5 处**：`script/items/data/<id>_item.tres`、`item_registry.tres`（ext_resource 行 + items 数组条目）、`art/icons/<id>.png`+`.import`（移到 `E:\GameMake\loss\trash_*\`，别硬删）、测试夹具里的 `&"<id>"`、`项目结构说明.md` 物品表。删完 `check_data_refs.py` 会报物品数变化，可当校验。
 
-## 1. 架构铁律
-- 核心系统＝class_name + static（UIManager/ItemRegistry/CraftingSystem/BuildingSystem/SaveManager/GraphicsConfig/ViewFrustum/WorldStreamer/DebugConfig/RespawnSystem/FilterSystem/CharacterRegistry），**不用 autoload**；新增 class_name 手工补 `.godot/global_script_class_cache.cfg`。
-- 枚举只能末尾追加（.tres 存数字）；对外暴露集合必须 `.duplicate()`。先 add_child 再设 global_position / 调依赖 _ready 的组件。
-- 同一文件多处 Edit 必须**串行**（并行静默丢改动），改完 grep 复核。
-- 只走 DebugConfig.log_msg/warn_msg，不裸 print；新分类同步 const + ALL_CATEGORIES + CATEGORY_LABELS。地形号 7海/8沙滩/10草原/11丛林/12矿区/13沙地/14火山/15雪地。
-- 移动 .gd 同步 5 处：.gd.uid、.tscn ext_resource path、test/*.gd 的 load()、global_script_class_cache.cfg path、首行注释。编辑器**正在运行**时 `.godot/editor/*`（open_scripts/script_editor_cache）会留旧路径——不要去改，切回 Godot 窗口触发重扫即可（uid 未变 → 自动识别为移动）。移动后必跑 gd_static_lint（含 class_name 缓存一致性校验）。
-- **敌人 AI 目录约定**（2026-09-14 用户要求）：`script/ai/enemy/` 下先分档次 `mob/`（普通小怪）、`boss/`（Boss）；**单个怪物有多个脚本**时为它建同名子文件夹收在一起（`mob/drone/`＝drone.gd + drone_projectile.gd），单脚本怪物平铺（`mob/slime.gd`）。
-- 运行时 new 的控件禁用 `set_anchors_preset`（得 0×0，点击穿透到 3D）→ 显式给 size/position；全屏面板走 UIManager size_changed→on_viewport_resized()。
-- `_ready` 最小尺寸不可信：① 居中用 CenterContainer，勿手算 offset；② autowrap Label 必须给确定正宽度 + `max_lines_visible`（宽 0 → 最小高度虚高 → 面板比窗口高）。
-- 属性名必须对 `doc/classes/*.xml` 核：Godot 4 是 `text_overrun_behavior`（非 `overrun_behavior`），写错 → _ready 抛错 → 整片灰屏，lint 查不出。Environment 只有 `adjustment_enabled/saturation/brightness/contrast`，无 `adjustment_color`/`vignette_*`。
+## 分辨率与物理层
+- 1280×720 + canvas_items + expand + fractional ⇒ 视口恒 1280×720，UI 按此写。GraphicsConfig（静态→user://graphics_config.cfg）：全屏/窗口/界面缩放 0.7~2.0/垂直同步/帧率上限；`has_saved_config=false` 时不动窗口。
+- 只有两层有名字：layer_1=玩家、layer_2=地面/障碍；玩家与史莱姆 `collision_mask=3`。**障碍物一律 layer2+mask0**（建筑、树干同约定）。`ResourceSpawner.obstacle_layers=[4]`（层3）、水体层8。
 
-## 2. 分辨率
-- 唯一开关 `project.godot [display]`：1280×720 + canvas_items + expand + fractional（`test/display_scale_test.gd` 钉住）⇒ `get_viewport_rect()` 恒 1280×720，**UI 一律按 1280×720 写**；3D 按原生分辨率。
-- GraphicsConfig（静态 → user://graphics_config.cfg）：全屏/窗口尺寸/界面缩放 0.7~2.0/垂直同步/帧率上限；`has_saved_config=false` 时不动窗口。面板＝GRAPHICS_PANEL，由 UIManager._ready() 应用。同一设置项只允许一份状态。
+## 玩家 / 相机 / 战斗
+- player(Node3D)→Physics(CharacterBody3D, take_damage/heal)+Inventory/Equipment/Vitals/ClickMover；相机在 player/Camera_controller/…/Camera3D。
+- 相机 `base_fov=50`；机位＝`_focus+Vector3(0,sin(俯角),-cos(俯角))*(9.434*zoom)` 后 look_at；俯角 30°(zoom0.6)~55°(1.8)，默认1.0≈38°。
+- **贴图朝向＝`script/visual/sprite_facing.gd`（静态）**：水平朝向相机 + 绕贴图底边做俯角补偿，屏幕高度不随缩放变化（不补偿时 55° 俯角只剩 57% 高）。树/玩家/史莱姆三处共用，`billboard` 全关；树用 `facing_transform`（自带锚点）、角色/敌人用 `facing_basis` 只覆盖 Visual 的 basis（**别连位置一起写**，会抵消渲染插值）。引用一律 `const Facing := preload("res://script/visual/sprite_facing.gd")`。回归工具 `test/sprite_facing_check.py`（读 camera_3d.gd 的 @export 复算，不依赖实机）。
+- **yaw 必须落在 `rotate_step_degrees`(45°) 整数倍**；松手 `snap_yaw_to_step()`，读档 `_apply_camera` 也要；`_wrap_yaw()` 把 `_yaw`/`_target_yaw` 移回 [0,2π)。
+- 攻击＝`intersect_shape(mask=0xFFFFFFFF, 最多10个)` + 沿父链找 `take_damage`；判定体＝半径2m、360°竖直圆柱（高2.6、中心 y=脚下+1.0）。**不用 visual_node.basis 当朝向**（广告牌）。敌人受击靠 Area3D；无人机无碰撞（layer/mask 全0，`anchor_on_ready` 须在 add_child 前）。该查询对所有层生效⇒新增碰撞体会占名额。
+- **玩家碰撞体仅 1.0m 高**（h=1.0/r=0.33）但精灵 1.48m ⇒ 平行地面的投射物/射线必须飞 y≤1.2。地形＝单个 StaticBody3D 挂多段薄盒（厚1.0、中心-0.5）⇒ 岛面恒 y=0。
+- 鼠标点地＝相机射线与"玩家脚下高度水平面"解析求交（`_ground_point_under_mouse`），**不走物理射线**⇒加碰撞体不影响点击寻路。
+- 死亡：HP=0/落水→`_on_death()`（幂等）→RespawnSystem+FilterSystem.DEATH，HUD 5s→`revive()`；敌人判定统一 `Physics.is_alive()`。死亡冻结温度值；复活半属性：HP/饱食度/自身电量各半、体温常温、`reset()` 清零核心、`revive()` 半血 `maxi(int(max_health*0.5),1)`。
+- XML 实查：`SpriteBase3D.shaded` 默认 **false** ⇒ Sprite3D 不吃光照。`billboard`：0=关（**本项目一律 0**，朝向交给 SpriteFacing）、2=FIXED_Y（只跟 yaw 不跟俯角 ⇒ 高俯角下贴图被压扁 cos 值）、1=ENABLED（会随俯角倾倒）。`alpha_cut`：**2 = OPAQUE_PREPASS（边缘软+排序正确）**，0 混合（排序问题）、1 DISCARD（边缘硬，未开 AA）。`render_priority` 仅 alpha_cut=0 有效。**精灵是双面渲染的平面**：屏幕上左不左右不右只看"局部 +X 落在相机右方向还是它的反向" —— **`SpriteFacing` 的 +X == 相机右方向（未镜像，与引擎 billboard 同侧）；旧的 `look_at(相机方向)` 的 +X == -相机右方向（镜像）**。⚠ 2026-09-22 记的"镜像×镜像＝不变"是**错的**（把"哪一面朝向相机"和"X 轴朝哪"混为一谈），据此换朝向时漏改 flip_h，直接导致「人物左右方向反了」，详见下条。
+- **左右翻转符号（换朝向系统必查）**：`flip_h` 的语义取决于该实体节点自带的镜像次数。玩家 `player.tscn` 的 BaseBody 烘了 `scale(-2.6434,-2.6434,1)`(=绕Z转180°) + `flip_v=true`，两者抵消后**净剩一次水平镜像** ⇒ **`spr.flip_h = not facing_left`**（true=屏幕上朝右）。史莱姆的 Sprite 是单位变换、无内置镜像 ⇒ **`sprite.flip_h = _facing_left`**（true=朝左）。**两边符号相反，不能互抄**；史莱姆的判据还必须用**相机右方向**（`cam.global_basis.x`）而不是世界 X，否则 Q/E 转镜头 90° 后左右就反。`test/sprite_facing_check.py` 第 3 项核手性、第 4 项核这两个符号，写错会直接报失败。
 
-## 3. 玩家 / 相机 / 战斗
-- 层级：player(Node3D,"player"组)→Physics(CharacterBody3D,current_health/take_damage/heal)+Inventory/Equipment/Vitals/ClickMover；相机 player/Camera_controller/Camera_Target/Camera3D。
-- 瞬移必须 `camera_3d.snap_to_target()`（相机入 "player_camera" 组）：teleport_player_to_start、SaveManager._apply_player、Physics.revive；并 `reset_visual_interp()` 否则拖残影。
-- vitals `_tick()` 顺序 体温→饱食度→电量。体温不在 10~40 开区间：**先扣血**（所有角色 0.5/s），有电量者再漏电 0.5/s。饱食度 ≤20 减速×0.9 且停自然回血，=0 每秒 -0.5HP。
-- 攻击＝physics.gd._on_attack_hitbox_active 的 intersect_shape + 沿父链找 take_damage；**判定体＝以玩家为圆心、半径 2m 的 360° 竖直圆柱**（高 2.6、中心 y=脚下+1.0）。**绝不用 visual_node.basis 当朝向**（它是永远 look_at 摄像机的广告牌）。敌人受击靠 Area3D 命中盒；无人机无碰撞（layer/mask 全 0，`anchor_on_ready=false` 须在 add_child 前设）。
-- **玩家物理碰撞体只有 1.0m 高**（Physics 下圆柱 h=1.0 / r=0.33，中心 y=0.5015 ⇒ 落在 y∈[0,1]），但精灵高 1.48m —— 两者不匹配。**任何"平行地面"的投射物/射线都必须飞在 y≤1.2**，否则从玩家头顶漏过（无人机弹幕的坑：`fire_height=0.9`，球 r=0.3 ⇒ 覆盖 [0.6,1.2]）。地形碰撞是平铺薄盒（中心 y=-0.5、厚 1.0 ⇒ 岛面恒在 y=0，全岛无高度差）。
-- 死亡：HP=0 或落水（脚下地形=7 且 y<-0.6）→ `_on_death()`（幂等）→ RespawnSystem.on_died() + FilterSystem.apply(DEATH)；HUD 5s 倒计时 → Physics.revive()。敌人目标判定统一 `Physics.is_alive()`。
-- 滤镜 filter_system.gd（静态）：Filter{NONE,DEATH,LOW_HEALTH,HIT,BURN,FREEZE,CUSTOM}；apply/clear/pulse/set_low_health/tick（由 hud_ui._process 驱）；与昼夜共用 map.tscn 的 WorldEnvironment。
-
-## 3.5 角色与电量
-- `character_registry.gd`（静态）唯一权威：`DEFAULT_ID="adventurer"`、`ALL_UNLOCKED=true`（发布改 false）、PORTRAIT_REGION、BASE_*（仅供面板显示，生效值在 physics/vitals 的 @export）。加角色只改这里；main_menu_ui._build_char_screen() 遍历出卡片。六角色：正式 adventurer/witch/robot + 测试 knight/guard/scout。
-- **两种电量语义（`power_embedded`，用户决策 2026-09-14）**——分界线是"电量能否影响人物本体"：
-  - 内置（robot）：不可关闭（set_has_power(false) 被拒）、归零掉血、低电 ×0.7 减速、**>80 且吃饱缓慢回血**。
-  - 外置（冒险家/魔女装核心）：**零影响** —— 不掉血、不减速、**不回血**；只保留过冷过热漏电与"耗电交互可用"。
-  - ⚠ `has_power` 是**运行时状态**（核心可装可拆）→ 实时电量读 `vitals.has_power`，别用 `CharacterRegistry.has_power()`（只返回开局默认）。
-- HUD 电量行＝**常驻占位**（`_power_label` 永在 vbox，offset_bottom=152 固定 4 行）：亮起 `⚡ 100` 暖黄 / 占位 `⚡ --` 灰；`hud_ui.set_power_active()` 由 vitals._push_hud 推，`_last_power_active_shown=-1` 哨兵保首帧必推。**别改回 visible=false**（VBoxContainer 忽略隐藏控件尺寸→面板变矮）。
-- 动力核心：**接口已备、本体未做** —— `vitals.set_has_power(active)`（装入满电/拆除清零/内置拒关）、`CharacterRegistry.has_embedded_power(id)`。缺 power_core 物品、投放点、装入·拆除入口、`has_power` 存档字段。
-- 换装＝换精灵表底层贴图（448×392，8列×7行，56px）：`physics._swap_sprite_atlas()` 深拷贝 SpriteFrames 后只改 AtlasTexture.atlas，**勿直接改 spr.sprite_frames**（共享子资源串色）。新 PNG 须编辑器导入（本机生不成 .ctex）→ ResourceLoader.exists() 守卫+退回。
-- 持久化：`SaveManager.create_slot(name, roll, character_id)` 写 meta.character_id + CharacterRegistry.set_active()；老存档缺字段→默认角色。顺序坑：physics._ready 早于 HUD → hud_ui._ready 必须补 `_bind_health()`；`_apply_character()` 在 `spr.play("idle")` 之前。
-- 专属制作栏（2.2.5）：Category 末尾追加 SURVIVAL/ALCHEMY/MACHINE + FIRST_EXCLUSIVE=5 + COMMON_CATEGORIES；CraftingSystem.is_category_visible()/_is_recipe_visible()/get_visible_categories(char_id) 过滤；crafting_ui 动态建标签，`_tabs_char_id` 检测换角色重建；归属映射 CRAFT_CATEGORY_OWNER。
-- 专属物品权限（决策⑦）：ItemData 加 exclusive_owner/access_policy(ANYONE|OWNER_BONUS|OWNER_ONLY)/owner_bonus_mult；执行点 ItemEffects.access_denied_reason()+apply()（再判一次）。**只卡"使用"，拾取/携带放开**；被拒走 HUD.show_toast()。现状：power_cell=OWNER_ONLY(robot)、repair_kit=OWNER_BONUS(robot,×1.5)，其余 ANYONE。
-- item_effects 支持一条效果改多值（正则 `\+([0-9.]+)_(power|food|health)`）；**饱食度满时整次进食作废**（含回血，判断在结算前）。
-- ◆ 未实装：① power_core 本体；② 冒险家能力（决策②）、魔女制药（决策⑤）；③ 专属制作站；④ 专属**装备**权限（equip_slot 未判）。
-
-## 4. 世界与资源
-- 地图 1600×1600，岛半径≈430，出生点＝孤岛中央草原区（海洋格无碰撞 → 走进去自由落体）。
-- 区域→资源权威 `task_system.REGION_RESOURCE_MAP`：草原/丛林=twig·grass·tree·berry·pebble；矿区=pebble·stone·iron_ore；火山=coal·iron_ore；雪地/沙地/沙滩=twig·pebble。**石头只在矿区、煤只在火山**。物品 id 是 `wood`（显示"木材"）；树要斧、大石/矿要镐。
-- 采集权威 `ResourceManager._try_harvest_nearest()`（水平 3m）；判定对象是记录，不给资源挂 Area3D。
-
-## 5. 流式加载（ViewFrustum）
-- LOAD_RADIUS={resource:70,enemy:70,drop:50,building:70} + UNLOAD_HYSTERESIS=24；判定＝距玩家平面距离，勿用屏幕视锥。
-- 资源（resource_manager）：数据层 _records + 表现层 _entities；卸载退回对象池绝不 queue_free；is_busy()/pinned 不卸载；存档源=_records。
-- 敌人+掉落物（world_streamer）：挂起=remove_child（状态保留），放回=add_child+设 global_position，**绝不重建**；`_sync_rec_from_node` 须在 remove_child 前取坐标；放回显式 add_to_group。
-
-## 6. 建造 / 昼夜 / 存档
-- 建筑：工作台 wood×10 / 熔炉 rock×20 + 5m 热源 35° / 储物箱 wood×8 + 20 格；`Building.spawn(id,pos,parent)` 无 tscn；station（永久解锁配方）与"须靠近"两套判定；碰撞 layer2。
-- **存档 v2：地形存快照，不再只存种子**（用户决策 2026-09-14）。`map_data` 是 `PackedByteArray`（1600×1600，2.56MB）→ `compress(DEFLATE)`+base64 ≈ 14KB 写进 `map` 段（+尺寸+`tiles_hash` SHA256）；`request_load` 解压进 `pending_map_tiles`，`map_generator_3d._apply_terrain_snapshot()` 在生成流水线跑完后**覆盖**地形（派生数据仍需生成），用完即清。老档无 `map` 段 → 按种子重算 + 记日志。诊断：比对哈希能说出"生成算法已变"。`SAVE_VERSION` 1→2（此前只写不读）。**种子降级为元数据**。改随机调用顺序不再毁老档。验证：`test/verify_save_map.py`（无需 Godot，检查地形↔实体坐标一致，实体不该落海）。
-- 存档全量化；敌人按 get_path_to 记路径，存档里没有＝已击杀→删节点；重建建筑前清光 Building + BuildingSystem.clear()；资源过程态归一为 HARVESTED。
-
-## 7. UI 约定
-- 快捷栏＝背包前 9 格镜像；UI 不改背包数据，拖放走信号。Esc 只归 UIManager 栈，Tab/C/B 归 hud_ui。面板懒创建 + on_shown 钩子；世界点击三处 _input 都要 `gui_get_hovered_control()==null` 守卫。
-- 面板互斥：WINDOW_PANELS（inventory/crafting/equipment/storage）只开一个；FULLSCREEN_PANELS 打开时收掉窗口类，覆盖类之间可叠。
-- HUD：左上状态栏（固定 4 行，电量行常驻占位）、右上簇（小地图+按钮列+时钟）、底部快捷栏；MinimapUI 是 HUD 子组件**不进面板栈**。
-- 地图：MapView 基类 ← MinimapUI/BigMapUI（M 键、BIGMAP_PANEL、modal 暂停）；底图 static 共享 + 分帧生成；**M 键监听在 UIManager._input**。罗盘旋转 `_map_angle=atan2(fwd.x,fwd.z)+PI`，坐标换算全经 _rot2/_rot2_inv。
-- 储物箱跨面板拖：source_id + cross_dropped → `Inventory.move_between()`；返回主菜单前 paused=false 且 UIManager.instance=null。
+## 世界 / 资源 / 流式
+- 地图 1600×1600，岛半径≈430，出生点＝中央草原；海洋格无碰撞→自由落体。
+- **采集只有一条路（2026-09-18 统一）**：`work_amount`（血量）÷ 工具 `harvest_work`（每击伤害）＝要采几下。`_harvest_by_work()` 每下 = 资源播 `harvest_animation` + 人物播作业动画 + 等 `work_interval` + 扣一次工作量，扣完才掉落；走远/死亡中断但**进度保留**并随记录层存档（`work_remaining`）。数值：树/大石头/铁矿/煤矿均 24（**石 6 下 / 铁 4 下**），草/木棍/浆果/小石块 = 1（挥一下就掉，间隔 0/0.2/0.4/0.3 沿用旧耗时）。旧的一次性 `_harvest_once`/`harvest_time`/`required_tool`/`harvest_speed_bonus`/`get_harvest_speed_multiplier` 全删。
+- 工具门槛＝资源 `allowed_tool_tags`（树 `axe`、大石头/铁矿/煤矿 `pickaxe`）vs 物品 `tags`，**留空 = 空手可采**，没有任何旧判定兜底；空手每击 `HAND_WORK_PER_HIT=1`。**在役工具只有 4 把**：石斧4/石镐4/铁斧6/铁镐6（均有配方）。`ItemData.tool_type` 只剩说明文案用途。人物作业动画 `physics.play_harvest_action()` 播 SpriteFrames 的 **`harvest`** 动画（2026-09-23 起**不再借用 attack**，attack 末段带白色剑光弧、砍树时播它出戏）且**不触发伤害**——`_on_attack_animation_frame_changed` 仍有 `if not is_attacking: return` 闸。`harvest` 帧取自精灵表**第 4 行 y=168**（`Rect2(56,168)` 抬臂 ↔ `Rect2(0,168)` 俯身，3 帧 loop=0 speed=5）；`is_working` 标志位与 `is_attacking` 独立、专管"作业独占动画"，六处配对（play 置位 / finished 清 / 移动让位 / 攻击抢占 / 死亡 / 复活），少一处就会被 `_update_animation` 同帧切回 idle（**这就是"砍树只闪一下/看不到动作"的根因**）。常驻核对 `test/player_anim_check.py`。
+- 区域→资源 `task_system.REGION_RESOURCE_MAP`：草原/丛林=twig·grass·tree·berry·pebble；矿区=pebble·stone·iron_ore；火山=coal·iron_ore；雪地/沙地/沙滩=twig·pebble。**石头只在矿区、煤只在火山**；`wood`＝"木材"；树要斧、大石/矿要镐；采集 `ResourceManager._try_harvest_nearest()`（水平3m、不挂 Area3D、只采最近一个）。
+- 资源实体＝`ResourceEntity`(Node3D)+组件 StateMachine/Visual/Interaction/Regeneration。**8 种里只有 tree 用专用预制体**，其余走 `tscn/resource_entity.tscn`+`ResourceData.growing_texture`（都未配→`_build_placeholder_mesh()` 兜底）。**兜底判据是「sprite 是否带 SpriteFrames」**，不是「growing_texture 是否为空」，否则贴了真帧动画的树会被再叠一套网格。
+- `tscn/prefab/tree.tscn`：根 Node3D(`resource_entity.gd`+`tree_data.tres`)/`Sprite`(AnimatedSprite3D，**billboard 0**——朝向由 `resource_visual.gd::_apply_facing` 每帧接管、`alpha_cut 2`)/`Visual`(`resource_visual.gd`，`sprite=NodePath("../Sprite")`)/`CollisionBody`(CharacterBody3D layer2 mask0)+`CollisionShape3D`(Cylinder r0.45 h2.0 中心 y1.0)。帧动画＝`art/props/tree_1/tree_frames.tres`（`growing` 单帧/`chop` 25帧@30fps 不循环/`sway` 25帧@7fps 循环备用），`ResourceData.harvest_animation` 指定砍伐动画名。**尺寸耦合**：`pixel_size=0.004`⇒贴图矩形 4.0×4.8m、内容高 3.5m；Sprite `position.y=1.756` 让树干底落 y=0（**改 pixel_size 必须重算**）。那 25 帧实为风摆循环（帧0=帧12=帧24），非砍伐形变。
+- 流式 ViewFrustum：LOAD_RADIUS={resource/enemy/building:70, drop:50}+HYSTERESIS=24，判定＝距玩家平面距离（勿用屏幕视锥）；资源 `_records` 数据层+`_entities` 表现层，卸载退对象池绝不 queue_free，存档源=_records；敌人+掉落物：挂起=remove_child（状态保留），放回=add_child+设 global_position，**绝不重建**；掉落物带 `instance`，`_tick_core` 用自身坐标推进核心温度值。

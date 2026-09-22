@@ -1235,6 +1235,9 @@ const _TEST_BOX_CONTENTS := {
 	&"coal": 20,
 	&"iron_ingot": 10,
 	&"berry": 15,
+	# 动力核心：正式来源是击败机械沙虫（规划中），先放在测试箱里，
+	# 好让"装入核心 → 电量栏亮起 → 解锁核心制作栏"整条链路一开始就能验证。
+	&"power_core": 1,
 }
 
 func _spawn_test_storage_box() -> void:

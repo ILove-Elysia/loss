@@ -8,7 +8,7 @@ script = ExtResource("1_s")
 item_id = &"iron_pickaxe"
 display_name = "铁镐"
 description = "铁制的镐子，开采矿石最省力的选择。
-效果：矿物采集速度+150%。"
+挖矿每次完成 6 点工作量（大石头 24 点 → 4 下）。"
 item_type = 1
 stackable = false
 max_stack = 1
@@ -19,6 +19,7 @@ icon = ExtResource("2_icon")
 equip_slot = 3
 attack_bonus = 0
 defense_bonus = 0
-harvest_speed_bonus = 1.5
 tool_type = 2
+tags = Array[StringName]([&"pickaxe"])
+harvest_work = 6
 metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

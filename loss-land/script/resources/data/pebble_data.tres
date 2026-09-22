@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ResourceData" format=3]
+[gd_resource type="Resource" script_class="ResourceData" format=3 uid="uid://cboxvq5tl4rno"]
 
 [ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_pb"]
 
@@ -10,13 +10,8 @@ resource_type = 9
 growing_animation = "growing"
 harvested_animation = "broken"
 transition_duration = 0.4
-min_distance = 2.0
 initial_count = 300
-harvest_time = 0.3
-required_tool = 0
+work_amount = 1
+work_interval = 0.3
 drop_item_id = "rock"
-drop_count_min = 1
-drop_count_max = 1
-can_regenerate = true
-regeneration_time = 300.0
 metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

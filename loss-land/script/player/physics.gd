@@ -1,8 +1,18 @@
 extends CharacterBody3D
 
+# 用 preload 而不用全局类名 SpriteFacing：全局类名依赖 .godot 的类缓存，
+# 新建脚本若还没被编辑器扫描登记，运行时就会报"找不到类"。
+# preload 是编译期常量，不走那份缓存。详见 script/visual/sprite_facing.gd
+const Facing := preload("res://script/visual/sprite_facing.gd")
+
 # ============================================
 # 导出变量 - 可在编辑器中修改
 # ============================================
+
+## 角色贴图朝向相机的俯角补偿比例。
+## 1.0 = 完全正对镜头（拉远拉近时角色在屏幕上的高度不变）；
+## 0.0 = 不补偿，只跟相机的水平方向（拉远时角色会被透视压扁）。
+@export_range(0.0, 1.0, 0.05) var billboard_tilt: float = 1.0
 
 ## 角色移动速度
 @export var speed: float = 5.0
@@ -30,9 +40,16 @@ extends CharacterBody3D
 
 ## 当前是否在攻击中
 var is_attacking: bool = false
+## 当前是否在"作业"中（砍树 / 挖矿，播 harvest 动画）。
+## 与 is_attacking 是两件事：作业不进攻击状态、不发 attacked 信号、不判定伤害，
+## 但它同样需要**独占动画**——否则播出的那一帧会被本帧末尾的 _update_animation()
+## 直接切回 idle，玩家只看到闪一下（2026-09-23 之前的实际表现）。
+var is_working: bool = false
 ## 攻击冷却计时器
 var _attack_timer: float = 0.0
-## 记录左右朝向（true=朝左，false=朝右）
+## 记录左右朝向（true = 往屏幕左边走 / 朝左，false = 往屏幕右边走 / 朝右）
+## ⚠ 它描述的是"往哪边走"，**不是** sprite.flip_h 的取值 ——
+##    两者相反，映射见 _sprite_flip_h()
 var facing_left: bool = true
 ## 上一物理帧 / 当前物理帧的世界坐标，供 _process 做渲染插值。
 ## 必要性：角色在 _physics_process 里按固定 60Hz 跳，相机却按渲染帧率平滑移动，
@@ -214,12 +231,38 @@ func perform_attack() -> void:
 	# 设置攻击状态
 	is_attacking = true
 	_attack_timer = attack_cooldown
+	# 攻击抢占动画：正在砍树时按 F，作业动画让位（否则 is_working 会一直挂着，
+	# 攻击动画播完后 _update_animation 会误以为还在作业、锁着不动）
+	is_working = false
 	
 	# 播放攻击动画
 	spr.play("attack")
 	
 	# 发射攻击信号（供其他系统监听，如HUD更新、伤害判定等）
 	emit_signal("attacked")
+
+## 播放一次"作业动作"（砍树 / 挖矿）
+##
+## 播 SpriteFrames 里的 `harvest` 动画 —— 即精灵表第 4 行（y=168）那两帧
+## 「直立抬臂 → 俯身下劈」的组合动作，**不再借用 attack**（attack 第 4 帧带一大片
+## 白色剑光弧，一眼就是"在打人"，砍树时播它非常出戏）。
+##
+## 与 perform_attack 的区别：只播动画，不进攻击状态、不发 attacked 信号、
+## 不触发伤害判定——否则玩家站在树边"砍树"会把旁边的史莱姆一起打了。
+##
+## 调用节奏：资源侧每 work_interval 秒调一次（树 1 秒）。这里做了防重播——
+## 一次作业的动画还没播完时再被调用就直接忽略，否则动画永远停在第 1 帧。
+func play_harvest_action() -> void:
+	if dead or current_health <= 0:
+		return
+	# 攻击动画优先级更高（更短、有伤害判定），别抢
+	if is_attacking:
+		return
+	# 这一下的 harvest 还在播 → 不重头开始
+	if is_working and spr.animation == "harvest":
+		return
+	is_working = true
+	spr.play("harvest")
 
 ## 受到伤害
 ## @param damage 伤害值（护甲会先减免，但至少掉 1 点，避免堆防御后完全无敌）
@@ -261,6 +304,7 @@ func _on_death() -> void:
 	dead = true
 	DebugConfig.log_msg(DebugConfig.CAT_PLAYER, "玩家死亡！")
 	is_attacking = false
+	is_working = false
 	_auto_active = false
 	spr.play("die")
 	RespawnSystem.on_died(global_position)
@@ -286,7 +330,7 @@ func _check_drown() -> void:
 		current_health = 0
 		_on_death()
 
-## 复活到重生点并恢复满状态。
+## 复活到重生点并恢复半状态（用户需求 2026-09-16：复活后所有属性只有上限的一半）。
 ## 由 HUD 「复活」按钮在 RespawnSystem.can_revive() 为 true 时调用。
 ## 重生点默认在出生点（map_generator_3d.teleport_player_to_start 注册），
 ## 未来由床/篝火调用 RespawnSystem.set_respawn_point 覆盖。
@@ -299,8 +343,8 @@ func revive() -> void:
 	# 传送后同步：相机吸附 + 视觉插值基准重置（否则镜头/精灵会飘回来）
 	reset_visual_interp()
 	snap_camera()
-	# 满血
-	current_health = max_health
+	# 半血复活（用户需求 2026-09-16：复活后所有属性只有上限的一半）
+	current_health = maxi(int(max_health * 0.5), 1)
 	dead = false
 	RespawnSystem.clear_dead()
 	# 复活：清除死亡滤镜（残血滤镜由下方 _update_hud_health 重新评估，不会误清）
@@ -310,6 +354,8 @@ func revive() -> void:
 	if vitals != null and vitals.has_method("reset"):
 		vitals.call("reset")
 	# 动画复位
+	is_attacking = false
+	is_working = false
 	spr.stop()
 	spr.play("idle")
 	# 刷新 HUD + 清死亡态
@@ -363,10 +409,12 @@ func _update_hud_health() -> void:
 ##
 ## ⚠ 攻击范围是**以玩家为中心的 360° 圆柱**，不要再拿 visual_node 的朝向去偏移它。
 ## 原因（2026-09-14 修的"某个方向打不到史莱姆"）：
-##   visual_node 每帧被 _update_visual_rotation() 转成 look_at(摄像机)，
-##   也就是一块**永远正对镜头的广告牌**。-visual_node.basis.z 恒等于
-##   "从玩家指向摄像机"的方向 —— 一个几乎不变的世界方向，跟角色朝哪走、
-##   精灵往哪翻（flip_h / facing_left）毫无关系。
+##   visual_node 每帧被 _update_visual_rotation() 转成一块**永远正对镜头的广告牌**，
+##   它的 basis.z 恒等于"从玩家指向摄像机"的方向 —— 一个由镜头决定、
+##   与角色朝哪走毫无关系的世界方向（精灵往哪翻只看 flip_h / facing_left）。
+##   注：2026-09-22 起朝向改由 SpriteFacing 计算（+Z 朝相机），
+##   与旧的 look_at 版本（-Z 朝相机）符号相反，但同样与角色朝向无关——
+##   这条"判定不要依赖视觉朝向"的结论不受影响。
 ##   原先还要沿这个方向把圆柱前推 attack_range*0.5，于是判定体整块挪到了
 ##   玩家"靠近镜头"的一侧：镜头侧 2 米内打得到，背对镜头那一侧永远在圆柱外，
 ##   侧面刚好卡在边界上（时中时不中）。看起来就像"只有某个方向打不到"。
@@ -636,15 +684,22 @@ func _apply_pixel_art_quality() -> void:
 		spr.set("alpha_antialiasing", 0)
 
 
-## 更新视觉节点的朝向（始终朝向摄像机）
+## 更新视觉节点的朝向（始终正对摄像机，含俯角补偿）
+##
+## 只覆盖旋转、不动位置 —— 位置由 _physics_process 与 _process 的插值负责，
+## 这里若连位置一起写，会把角色拽回物理帧的精确坐标，抵消掉渲染插值（拖影）。
+##
+## 为什么不用 look_at(摄像机方向)：
+##   那样只跟相机的水平方向（yaw），不跟俯角（pitch）。相机拉到 60° 俯角时，
+##   竖直的角色贴图被透视压缩到只剩 cos60° = 50% 高，推近拉远时角色忽高忽低。
+##   改用 SpriteFacing 后，角色在屏幕上的高度不随缩放变化。
 func _update_visual_rotation() -> void:
-	var cam = get_viewport().get_camera_3d()
-	if cam:
-		var look_dir = cam.global_position - global_position
-		look_dir.y = 0
-		if look_dir.length() > 0.001:
-			look_dir = look_dir.normalized()
-			visual_node.look_at(global_position + look_dir, Vector3.UP)
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or visual_node == null or not is_instance_valid(visual_node):
+		return
+	var t := visual_node.global_transform
+	t.basis = Facing.facing_basis(cam, billboard_tilt)
+	visual_node.global_transform = t
 
 ## 更新角色动画
 ## @param dir 移动方向向量
@@ -653,16 +708,51 @@ func _update_animation(dir: Vector3) -> void:
 	if is_attacking:
 		return
 	
+	# 作业状态（砍树 / 挖矿）同样独占动画：
+	# 这个函数在 _physics_process 的末尾每帧都会跑，而 play_harvest_action() 是在
+	# 资源侧的 await 定时器里调用的 —— 如果这里不管，播出的 harvest 会在同一帧
+	# 就被下面的 else 分支切成 idle，玩家看到的只是"闪一下"（2026-09-23 之前的实际表现）。
+	# 原地站着 → 保持 harvest 播完；一旦开始移动 → 让位给 walk（否则会卡在弯腰姿势走路）。
+	if is_working:
+		if dir.length() <= 0.0:
+			spr.flip_h = _sprite_flip_h()
+			return
+		is_working = false
+	
 	# 根据移动状态播放对应动画
 	if dir.length() > 0:
 		if spr.animation != "walk":
 			spr.play("walk")
-		# 根据记录的朝向翻转动画
-		spr.flip_h = facing_left
 	else:
 		if spr.animation != "idle":
 			spr.play("idle")
-		spr.flip_h = facing_left
+	
+	# 贴图左右翻转（两个分支都是同一个值，所以提到外面来只写一次）
+	spr.flip_h = _sprite_flip_h()
+
+
+## 当前该给 sprite.flip_h 赋什么值。
+##
+## ⚠ 这里必须**取反**，否则"人物左右方向反了"（2026-09-22 踩过）。
+##
+## 链条要从两头看：
+##
+## ① 节点自带的镜像：player.tscn 里 BaseBody(AnimatedSprite3D) 被烘了
+##    `transform = 180° 绕 Z 旋转 ×2.6434` 以及 `flip_v = true`。
+##    180° 旋转 = 水平镜像 × 垂直镜像，和 flip_v 那次垂直镜像抵消，
+##    净效果只剩**一次水平镜像**。所以：
+##      spr.flip_h = true  → 贴图被翻转一次，变成"镜像版"
+##      spr.flip_h = false → 贴图保持原样（角色美术是**朝右**画的）
+##
+## ② 看向哪一侧：_update_visual_rotation() 用 SpriteFacing 摆正贴图。
+##    它产生的是**和引擎 billboard 一致**的朝向（未镜像，从正面看）——
+##    旧实现用的 `look_at(相机方向)` 恰好是反的（从背面看 = 多一层镜像），
+##    所以换成 SpriteFacing 之后这一层的符号变了，flip_h 必须跟着反。
+##
+## 两头合起来：flip_h = true 在屏幕上"朝右"，flip_h = false "朝左"，
+## 与 facing_left（语义是"往屏幕左边走"）正好相反。
+func _sprite_flip_h() -> bool:
+	return not facing_left
 
 # ============================================
 # 动画信号回调
@@ -674,6 +764,13 @@ func _on_attack_animation_finished() -> void:
 		# 攻击动画播放完毕，恢复idle状态
 		is_attacking = false
 		spr.play("idle")
+	elif spr.animation == "harvest":
+		# 作业动作（砍树 / 挖矿）播完 → 起身站立。
+		# 下一次作业时 play_harvest_action 会再播一遍，所以砍树看起来是
+		# "劈一下 → 站一下 → 再劈一下"，停顿长度由资源的 work_interval 决定（树 1 秒）。
+		# 必须在这里清 is_working：否则 _update_animation 会一直以为还在作业、锁住动画。
+		is_working = false
+		spr.play("idle")
 	elif spr.animation == "die":
 		# 死亡动画播放完毕
 		DebugConfig.log_msg(DebugConfig.CAT_PLAYER, "玩家死亡动画结束")
@@ -681,6 +778,11 @@ func _on_attack_animation_finished() -> void:
 ## 攻击动画播放到特定帧时的回调（用于激活伤害检测）
 func _on_attack_animation_frame_changed() -> void:
 	if spr.animation == "attack":
+		# 只有真正的攻击才判定伤害。
+		# 2026-09-23 起砍树 / 挖矿走独立的 harvest 动画，已经不会再进到 attack 分支；
+		# 这道 is_attacking 闸继续留着，防止以后有别的路径误播 attack 时把旁边的怪一起打了。
+		if not is_attacking:
+			return
 		# 在第2帧时激活伤害检测（攻击动作开始）
 		if spr.frame == 1:
 			_on_attack_hitbox_active()

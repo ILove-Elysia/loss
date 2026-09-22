@@ -455,6 +455,10 @@ func use_item(slot: int) -> void:
 
 	# 用 can_use 而非裸 usable：usable=true 但 use_effect 为空时不算"能使用"
 	if not ItemEffects.can_use(item.data):
+		# 能装备但没有使用效果的（武器 / 护甲 / 核心）：入口在装备面板，
+		# 右键给一句指引——"右键毫无反应"对玩家来说等同于物品坏了。
+		if item.data.is_equippable():
+			_show_toast("请在装备面板中装备：%s" % item.data.display_name)
 		return
 
 	# 专属物品的使用权限（决策 ⑦）：不满足就明确说明原因，别让右键"没反应"。

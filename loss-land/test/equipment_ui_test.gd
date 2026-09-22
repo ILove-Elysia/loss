@@ -47,7 +47,7 @@ func _test_panel() -> void:
 	var reg = ItemRegistry.get_registry()
 	inv.add_item(reg.get_item(&"wooden_sword"), 1)
 	inv.add_item(reg.get_item(&"wood_armor"), 1)
-	inv.add_item(reg.get_item(&"wooden_axe"), 1)
+	inv.add_item(reg.get_item(&"stone_axe"), 1)
 
 	# 构造界面
 	var ui := preload("res://script/ui/equipment_ui.gd").new()
@@ -64,9 +64,14 @@ func _test_panel() -> void:
 	_check("攻击力" in ui._stat_label.text, "总览显示攻击力")
 	_check("防御力" in ui._stat_label.text, "总览显示防御力")
 
-	# 空装时三槽位应显示（空）
+	# 空装时四槽位应显示（空）
 	var weapon_name: Label = ui._slot_name.get(ItemData.EquipSlot.WEAPON, null)
 	_check(weapon_name != null and weapon_name.text == "（空）", "空装武器槽显示（空）")
+
+	# 核心槽：动力核心的装入 / 拆除入口就靠它，必须出现在面板上，
+	# 否则玩家能装不能拆。
+	var core_name: Label = ui._slot_name.get(ItemData.EquipSlot.CORE, null)
+	_check(core_name != null and core_name.text == "（空）", "核心槽存在且初始为空")
 
 	# 点击列表里的木剑按钮 → 装备
 	# 找到文本含「木剑」的按钮并按下

@@ -36,6 +36,17 @@ var data: ItemData:
 		data = value
 		# 数据改变时，检查数量是否超过最大堆叠
 		_clamp_quantity()
+		# 携带电量的核心物品（动力核心等）在这里挂上它自己的核心状态实例。
+		# 放在 setter 里而不是各个调用点，是为了让**所有**入口（制作产出、
+		# 掉落、测试箱、拾取、读档）都自动带上 —— 不再可能出现"空壳核心"。
+		_sync_core()
+
+# 核心物品的独立状态：电量 + 自身温度值。
+#
+# 只有 data.carries_power == true 的物品才有它，其余物品恒为 null。
+# 它跟着本实例在 背包 ↔ 装备槽 ↔ 掉落物 之间流转，**引用不变**，
+# 所以电量与温度值天然连续 —— 拆下重装不会回满（这是引入它的直接原因）。
+var core: PowerCoreInstance = null
 
 # 数量后备字段
 # 重要：quantity 的 setter 内部绝不能再对 quantity 赋值，
@@ -145,6 +156,8 @@ func split(count: int) -> ItemInstance:
 
 	# 创建新实例
 	var new_instance = ItemInstance.new(data, count)
+	if core != null:
+		new_instance.core = core.duplicate_core()
 	# 从当前实例移除
 	quantity -= count
 	return new_instance
@@ -235,11 +248,35 @@ func from_dict(dict: Dictionary) -> bool:
 
 	data = registry.get_item(StringName(dict.item_id))
 	quantity = dict.get("quantity", 1)
-	return data != null
+	if data == null:
+		return false
+	# 核心状态：setter 已经挂了一枚出厂满电的核心，这里用存档值覆盖它。
+	# 老存档没有 core 字段 → 保持出厂状态（当时的核心确实没存过状态）。
+	if dict.has("core") and core != null:
+		var cd = dict.get("core")
+		if cd is Dictionary:
+			core.from_dict(cd)
+	return true
 
 # ============================================
 # 私有方法
 # ============================================
+
+# ----------------------------------------
+# 同步核心状态函数
+#
+# data 变化后调用：
+#   携带电量的物品 → 没有核心就补一枚出厂满电的（有则原样保留，
+#                     所以更换 data 不会把已消耗的电量冲掉）
+#   不携带电量的物品 → 清掉可能残留的核心引用
+# ----------------------------------------
+func _sync_core() -> void:
+	if data != null and data.carries_power:
+		if core == null:
+			core = PowerCoreSystem.create_core(data.item_id)
+	elif core != null:
+		core = null
+
 
 # ----------------------------------------
 # 限制数量函数

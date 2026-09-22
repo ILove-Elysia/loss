@@ -41,19 +41,6 @@ enum ResourceType {
 	PEBBLE      # 小石块（空手可捡的碎石，掉落石头；大石头才需要镐）
 }
 
-# ----------------------------------------
-# 工具类型枚举
-# 定义采集该资源需要的工具类型
-# NONE 表示不需要任何工具，空手就能采集
-# ----------------------------------------
-enum HarvestTool {
-	NONE,       # 无需工具（如草、树枝）
-	AXE,        # 斧头（如树）
-	PICKAXE,    # 镐（如石头）
-	SHOVEL,     # 铲子（用于挖掘）
-	KNIFE       # 小刀
-}
-
 # ============================================
 # 基本信息配置
 # ============================================
@@ -88,6 +75,12 @@ enum HarvestTool {
 
 # 已采集状态的动画名称
 @export var harvested_animation: String = "harvested"
+
+# 被采集（砍伐/挖掘）时播放的动画名称
+# 同样取自 AnimatedSprite3D 的 SpriteFrames，播完停在最后一帧。
+# 要与实际作业节奏对齐才有意义：树每挥一下 1 秒（work_interval），chop 是 25 帧 @30fps ≈ 0.83s。
+# SpriteFrames 里没有这个动画名时，退回 AnimationPlayer 的 "harvest"。
+@export var harvest_animation: String = "chop"
 
 # 状态切换的过渡动画时长（秒）
 # 采集后从生长状态切换到已采集状态需要的时间
@@ -127,13 +120,33 @@ enum HarvestTool {
 # 是否可以采集
 @export var can_harvest: bool = true
 
-# 采集所需时间（秒）
-# 玩家需要站在原地多久才能完成采集
-@export var harvest_time: float = 1.0
+# ----------------------------------------
+# 工作量：采集就是"把这条血条打空"
+#
+#   work_amount    资源的工作量总量（相当于血量），累计做满才采得下来。
+#                  每次作业扣掉「当前工具的 harvest_work」，扣完才掉落。
+#   work_interval  每一"次"作业的耗时（秒）。
+#
+# 工具的强弱只改"每次做掉多少"（harvest_work），不改挥舞速度——
+# 好工具是"每次做得更多"，不是"挥得更快"。
+#
+# 空手（没装工具 / 工具没配 harvest_work）每次做 1 点，
+# 所以空手可采的资源（草、木棍、浆果、小石块）把 work_amount 配成 1 即可，
+# 实际手感 = 挥一下 + 等一个 work_interval。
+# ----------------------------------------
+@export var work_amount: int = 0
 
-# 采集所需的工具类型
-# NONE=无需工具, AXE=斧头, PICKAXE=镐, SHOVEL=铲子, KNIFE=小刀
-@export var required_tool: HarvestTool = HarvestTool.NONE
+# 每一次作业的耗时（秒）
+@export var work_interval: float = 1.0
+
+# 工具标签白名单：装备的工具**带有其中任意一个标签**才允许作业。
+#
+#   填了标签  = 必须带对应工具才能采（树填 [&"axe"]，大石头/矿填 [&"pickaxe"]），
+#                空手一律拒绝；
+#   留空      = 不设门槛，空手也能采（草、木棍、浆果、小石块）。
+#
+# 这就是唯一的工具门槛判定，没有任何"工具类型相等"的旧规则做兜底。
+@export var allowed_tool_tags: Array[StringName] = []
 
 # 采集后掉落的物品ID
 # 这个ID需要与你的物品系统中的物品ID对应
@@ -239,18 +252,18 @@ func get_dig_drop_count() -> int:
 
 
 # ----------------------------------------
-# 工具中文名（静态）：采集被拒时给玩家看的提示要用
-# 数值与 HarvestTool 枚举一一对应
+# 工具标签的中文名（静态）：采集被拒时给玩家看的提示要用
+# 按标签取名，不再按已删除的"工具类型枚举"取名
 # ----------------------------------------
-static func get_required_tool_name(tool: int) -> String:
-	match tool:
-		HarvestTool.AXE:
+static func get_tool_tag_name(tag: StringName) -> String:
+	match String(tag):
+		"axe":
 			return "斧头"
-		HarvestTool.PICKAXE:
+		"pickaxe":
 			return "镐子"
-		HarvestTool.SHOVEL:
+		"shovel":
 			return "铲子"
-		HarvestTool.KNIFE:
+		"knife":
 			return "小刀"
 	return "工具"
 
@@ -258,10 +271,36 @@ static func get_required_tool_name(tool: int) -> String:
 # ----------------------------------------
 # 采集动词（静态）：斧头="砍伐"、镐子="挖掘"，其余笼统说"采集"
 # ----------------------------------------
-static func get_harvest_verb(tool: int) -> String:
-	match tool:
-		HarvestTool.AXE:
+static func get_harvest_verb(tag: StringName) -> String:
+	match String(tag):
+		"axe":
 			return "砍伐"
-		HarvestTool.PICKAXE:
+		"pickaxe":
 			return "挖掘"
 	return "采集"
+
+
+# ----------------------------------------
+# 主工具标签：白名单里的第一个，用来生成"需要装备X"这类提示
+# 没设门槛（白名单为空）时返回空标签
+# ----------------------------------------
+func primary_tool_tag() -> StringName:
+	if allowed_tool_tags.is_empty():
+		return &""
+	return allowed_tool_tags[0]
+
+# ----------------------------------------
+# 工具标签白名单判定
+#
+# 参数：tool_tags - 当前装备工具身上的标签列表
+# 返回：true = 允许作业
+#
+# 白名单为空时不参与判定（由调用方按"空手可采"处理）。
+# ----------------------------------------
+func is_tool_tag_allowed(tool_tags: Array[StringName]) -> bool:
+	if allowed_tool_tags.is_empty():
+		return false
+	for t in tool_tags:
+		if allowed_tool_tags.has(t):
+			return true
+	return false

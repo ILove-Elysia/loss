@@ -98,31 +98,31 @@ func _test_recipe_list() -> void:
 
 
 func _test_detail() -> void:
-	var recipe := CraftingSystem.find_recipe(&"wooden_axe")
-	_check(recipe != null, "找到木斧配方")
+	var recipe := CraftingSystem.find_recipe(&"wooden_sword")
+	_check(recipe != null, "找到木剑配方")
 	_ui._select_recipe(recipe)
-	_check(_ui._selected == recipe, "选中木斧配方")
-	_check(_ui._detail_name.text.contains("木斧"), "详情标题显示「木斧」（实际：%s）" % _ui._detail_name.text)
-	_check(_ui._material_list.get_child_count() == 1, "材料清单 1 行（木材）")
-	# 木斧需要木材 x3，此时背包为空 → 显示 0/3
+	_check(_ui._selected == recipe, "选中木剑配方")
+	_check(_ui._detail_name.text.contains("木剑"), "详情标题显示「木剑」（实际：%s）" % _ui._detail_name.text)
+	_check(_ui._material_list.get_child_count() == 1, "材料清单 1 行（木棍）")
+	# 木剑需要木棍 x2，此时背包为空 → 显示 0/2
 	var line := _ui._material_list.get_child(0) as Label
-	_check(line != null and line.text.contains("0 / 3"), "材料行显示 0 / 3（实际：%s）" % (line.text if line else "<空>"))
+	_check(line != null and line.text.contains("0 / 2"), "材料行显示 0 / 2（实际：%s）" % (line.text if line else "<空>"))
 
 
 func _test_button_state() -> void:
 	_check(_ui._craft_button.disabled, "材料不足时合成按钮禁用")
-	_give(&"log", 3)
+	_give(&"stick", 2)
 	_ui.refresh()
-	_check(not _ui._craft_button.disabled, "给足 3 根木材后按钮启用")
+	_check(not _ui._craft_button.disabled, "给足 2 根木棍后按钮启用")
 	var line := _ui._material_list.get_child(0) as Label
-	_check(line.text.contains("3 / 3"), "材料行刷新为 3 / 3（实际：%s）" % line.text)
+	_check(line.text.contains("2 / 2"), "材料行刷新为 2 / 2（实际：%s）" % line.text)
 
 
 func _test_craft_click() -> void:
 	# 直接触发按钮的 pressed 信号，等价于玩家点了一下
 	_ui._craft_button.pressed.emit()
-	_check(_inventory.get_item_count(&"log") == 0, "木材被扣除（0）")
-	_check(_inventory.get_item_count(&"wooden_axe") == 1, "产出木斧 x1")
+	_check(_inventory.get_item_count(&"stick") == 0, "木棍被扣除（0）")
+	_check(_inventory.get_item_count(&"wooden_sword") == 1, "产出木剑 x1")
 	_check(_ui._status_label.text.contains("合成成功"), "状态栏提示合成成功（实际：%s）" % _ui._status_label.text)
 	_check(_ui._craft_button.disabled, "合成后材料归零，按钮重新禁用")
 

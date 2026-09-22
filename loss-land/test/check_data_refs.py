@@ -10,6 +10,7 @@
 #   所以在新增 .tres / 配方后必须跑一遍这个脚本。
 #
 # 检查项：
+#   0. 全工程所有 res:// 引用指向的文件是否存在（.tres/.tscn/.res/.gd 四种载体）
 #   1. 所有 .tres 里 ext_resource 指向的文件是否存在
 #   2. item_registry.tres 登记的每个物品 .tres 是否存在、item_id 是否与文件名一致
 #   3. 每个 item .tres 的 icon 文件是否存在
@@ -55,6 +56,81 @@ def find_tres(*dirs: str):
 				if fn.endswith(".tres"):
 					out.append(os.path.join(dirpath, fn))
 	return out
+
+
+# ---- 0. 全工程 res:// 引用存在性 ----
+# 只查 .tres 不够，这是踩过的坑：
+#   - tscn/prefab/grass_entity.tscn 引用 art/oak_woods_v1.0/decorations/grass_*.png
+#   - art/地图测试瓦片集/瓦片集.res 是二进制资源，内部字符串引用 oak_woods_tileset.png
+# 整理美术目录时这两处都被漏掉过，因为当时只 grep 了 script/ 和 scene/。
+# 所以这里把 .tscn、二进制 .res、.gd 的字面量 load 全部纳入。
+# （上述两处引用已于 2026-09-18 随文件一起移出工程，但这条检查必须保留——
+#   只要将来还有二进制 .res 或 tscn/prefab/ 里的场景，同类漏检就会重演。）
+SCAN_EXTS = (".tres", ".tscn", ".res", ".gd", ".godot")
+SKIP_DIRS = {".godot", "_source", "_deprecated", "addons", "Godot",
+             "godot_state_charts_examples", "NVIDIA Corporation", "记忆"}
+# 文本资源里的路径一定被引号包着，直接取引号内全部内容——
+# 不能用 [a-z_/]+ 这类字符集，路径里有空格（如 "Mushroom with VFX"）会被截断
+TEXT_REF_RE = re.compile(r'"(res://[^"]+)"')
+# 二进制 .res 里没有引号，路径后面可能粘连二进制数据，
+# 先用宽字符集抓，再按已知扩展名截断
+BIN_REF_RE = re.compile(r"res://[A-Za-z0-9_/.\- ]+")
+BIN_TAIL_RE = re.compile(r"^(.*?\.(?:png|svg|jpg|jpeg|res|tres|tscn|gd|godot|wav|ogg))")
+
+
+def iter_scan_files():
+	for dirpath, dirnames, filenames in os.walk(ROOT):
+		# 子目录里若自带 project.godot，那是另一个独立工程，
+		# 它的 res:// 根是它自己，拿来主工程校验只会全是误报
+		if dirpath != ROOT and "project.godot" in filenames:
+			dirnames[:] = []
+			continue
+		dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+		for fn in filenames:
+			if fn.endswith(SCAN_EXTS):
+				yield os.path.join(dirpath, fn)
+
+
+ref_total = 0
+ref_files = 0
+for path in iter_scan_files():
+	ext = os.path.splitext(path)[1]
+	ref_files += 1
+	if ext == ".gd":
+		# 只认 load("res://...") / preload("res://...") 的字面量，拼接出来的跳过
+		refs = re.findall(r'(?:pre)?load\(\s*"(res://[^"]+)"\s*\)', read(path))
+	elif ext == ".res":
+		# 二进制资源：整块当 latin-1 文本找 res:// 串
+		with open(path, "rb") as f:
+			blob = f.read().decode("latin-1")
+		refs = []
+		for raw in BIN_REF_RE.findall(blob):
+			m = BIN_TAIL_RE.match(raw.rstrip())
+			refs.append(m.group(1) if m else raw.rstrip())
+	else:
+		refs = TEXT_REF_RE.findall(read(path))
+	for ref in set(refs):
+		if ref.startswith("res://.godot/"):
+			continue  # 引擎生成物，不在版本控制里
+		ref_total += 1
+		if not os.path.exists(res_to_abs(ref)):
+			errors.append("%s: res:// 引用指向不存在的文件 -> %s" % (rel(path), ref))
+
+
+# ---- 0b. art/ 下的图片必须有 .import 伴随文件 ----
+# 移动 .png 时漏掉 .png.import 会让 Godot 按默认参数重新导入，
+# 滤镜/像素对齐等设置静默丢失，图片看起来"变糊了"却查不出原因。
+ART_DIR = os.path.join(ROOT, "art")
+IMPORT_EXTS = (".png", ".svg", ".jpg", ".wav", ".ogg")
+import_missing = 0
+for dirpath, dirnames, filenames in os.walk(ART_DIR):
+	if "_source" in dirpath or "_deprecated" in dirpath:
+		continue
+	for fn in filenames:
+		if fn.endswith(IMPORT_EXTS):
+			if not os.path.exists(os.path.join(dirpath, fn + ".import")):
+				warnings.append("%s: 缺少 .import 伴随文件" % rel(os.path.join(dirpath, fn)))
+				import_missing += 1
 
 
 # ---- 1. 所有 tres 的 ext_resource 是否存在 ----
@@ -200,6 +276,7 @@ else:
 
 
 # ---- 输出 ----
+print("扫描 %d 个资源/脚本文件，校验 %d 条 res:// 引用" % (ref_files, ref_total))
 print("检查了 %d 个 .tres 文件" % len(tres_files))
 print("物品 %d 件、资源 %d 种" % (len(registered_items), len(resource_ids)))
 if warnings:

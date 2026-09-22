@@ -263,6 +263,43 @@ func add_item_instance(item_instance: ItemInstance) -> bool:
 	return false
 
 # ----------------------------------------
+# 取出一件物品实例函数（装备 / 丢弃时用）
+#
+# 为什么不用 remove_item：
+#   remove_item 是"按 id 减数量"，只返回减掉了几个 —— **物品实例本身被丢掉**，
+#   之后再 add_item 只会造一个全新的实例。核心的电量、温度值都挂在实例上，
+#   于是"拆下核心 → 电量凭空回满"。
+#   本方法把同一个实例交出去，状态天然连续。
+#
+# 参数：item_id - 物品ID
+# 返回：取出的实例（背包里没有则 null）
+# ----------------------------------------
+func take_item_instance(item_id: StringName) -> ItemInstance:
+	var slots := find_item_slots(item_id)
+	if slots.is_empty():
+		return null
+
+	var idx: int = slots[0]
+	var slot: ItemInstance = _slots[idx]
+	if slot == null or slot.is_empty():
+		return null
+
+	if slot.quantity <= 1:
+		# 整件取走：槽位清空，交出的就是原实例
+		_slots[idx] = null
+		item_changed.emit(idx)
+		item_removed.emit(item_id, 1, idx)
+		return slot
+
+	# 堆叠物品：拆出 1 件（split 会连核心状态一起克隆），原槽数量 -1
+	var taken: ItemInstance = slot.split(1)
+	if taken == null:
+		return null
+	item_changed.emit(idx)
+	item_removed.emit(item_id, 1, idx)
+	return taken
+
+# ----------------------------------------
 # 移除物品函数
 # 从背包移除指定数量的物品
 #

@@ -15,10 +15,6 @@ run/main_scene="uid://7sbje2160u5w"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://art/icon.svg"
 
-[autoload]
-
-PhantomCameraManager="*uid://duq6jhf6unyis"
-
 [display]
 
 window/size/viewport_width=1280
@@ -27,10 +23,6 @@ window/size/window_width_override=1280
 window/size/window_height_override=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-
-[editor_plugins]
-
-enabled=PackedStringArray("res://addons/TileMapLayer3D/plugin.cfg", "res://addons/csv-data-importer/plugin.cfg", "res://addons/godot_state_charts/plugin.cfg", "res://addons/phantom_camera/plugin.cfg", "res://addons/script-ide/plugin.cfg")
 
 [global_group]
 

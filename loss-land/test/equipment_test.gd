@@ -2,10 +2,11 @@
 # 装备系统 headless 验证
 # 覆盖：
 #   1. PlayerEquipment 装备/卸下流转（与背包交换）
-#   2. 属性汇总：攻击 / 防御 / 采集速度倍率（工具类型匹配才生效）
+#   2. 属性汇总：攻击 / 防御 / 工具槽的每击工作量
 #   3. Physics 最终攻击力含武器加成、受伤按护甲减伤
-#   4. ResourceEntity 采集耗时：匹配工具明显缩短
-#   5. 集成：装备木斧后砍树更快
+#   4. ResourceEntity 采集：工具标签白名单门槛 + 每击工作量（24 点 / 4 点 = 6 次）
+#   5. 集成：装备石斧后确实能砍树，且次数对得上
+#   6. 核心槽：装入 / 拆除动力核心 → 开启 / 关闭「外置电量」与「核心」制作栏
 extends SceneTree
 
 var _passed := 0
@@ -17,8 +18,9 @@ func _initialize() -> void:
 	_test_equip_unequip()
 	_test_bonus_methods()
 	_test_physics_attack_defense()
-	_test_harvest_duration()
+	_test_harvest_work()
 	_test_harvest_integration()
+	await _test_core_slot()
 	print("\n========== 装备系统测试 ==========")
 	print("通过: %d   失败: %d" % [_passed, _failed])
 	print("RESULT: %s" % ("PASS" if _failed == 0 else "FAIL"))
@@ -59,6 +61,65 @@ func _add(player: Node3D, item_id: StringName, count: int) -> void:
 	var inv = player.get_node("Inventory")
 	var registry = ItemRegistry.get_registry()
 	inv.add_item(registry.get_item(item_id), count)
+
+
+# ----------------------------------------
+# 6. 核心槽：装入 / 拆除动力核心 → 开关「核心电量行」与「核心」制作栏
+#
+# 这条链路的坑在于它是**跨系统的副作用**：核心槽本身不带任何数值，
+# 装上去以后真正变化的是 Vitals 的 has_power（只读计算属性）与
+# CraftingSystem 的静态开关。只测"槽位里有东西"是测不出来的。
+#
+# 2026-09-16 起电量是**核心自己的属性**（PowerCoreInstance），
+# 装入的是"一枚电量 100 的核心"，拆下时它连同电量原样回到背包。
+# ----------------------------------------
+func _test_core_slot() -> void:
+	# 先切到冒险家（默认无内置电量），必须在 Vitals._ready 之前设好
+	CharacterRegistry.set_active("adventurer")
+	CraftingSystem.set_core_unlocked(false)
+
+	var player := Node3D.new()
+	player.name = "player"
+	root.add_child(player)
+
+	var inv = preload("res://script/inventory/inventory.gd").new()
+	inv.name = "Inventory"
+	player.add_child(inv)
+
+	var vitals = preload("res://script/player/vitals.gd").new()
+	vitals.name = "Vitals"
+	player.add_child(vitals)
+
+	var equip: PlayerEquipment = preload("res://script/player/equipment.gd").new()
+	equip.name = "Equipment"
+	player.add_child(equip)
+
+	await process_frame
+
+	_check(not vitals.has_power, "冒险家开局没有电量")
+	_check(not equip.has_core(), "核心槽初始为空")
+
+	_add(player, &"power_core", 1)
+	_check(equip.equip(&"power_core"), "动力核心装入核心槽")
+	await process_frame
+	_check(equip.has_core(), "核心槽已占用")
+	_check(equip.get_item(ItemData.EquipSlot.CORE).item_id == &"power_core",
+		"槽里就是动力核心")
+	_check(vitals.has_power, "装入核心 → has_power 开启（运行时计算）")
+	_check(is_equal_approx(equip.get_core_instance().power, 100.0), "核心出厂满电 100")
+	_check(is_equal_approx(vitals.get_core_power(), 100.0), "vitals 读到核心电量 100")
+	_check(CraftingSystem.core_tab_unlocked, "装入核心 → 「核心」制作栏解锁")
+
+	# 拆下：核心（连同自己的电量）回到背包，has_power 立刻回落
+	_check(equip.unequip(ItemData.EquipSlot.CORE), "动力核心拆下核心槽")
+	await process_frame
+	_check(not equip.has_core(), "核心槽已清空")
+	_check(not vitals.has_power, "拆下核心 → has_power 关闭")
+	_check(is_equal_approx(vitals.get_core_power(), 0.0), "没装核心时 vitals 读不到核心电量")
+	_check(not CraftingSystem.core_tab_unlocked, "拆下核心 → 「核心」制作栏关闭")
+
+	player.queue_free()
+
 
 # ----------------------------------------
 # 1. 装备 / 卸下流转
@@ -101,14 +162,13 @@ func _test_bonus_methods() -> void:
 
 	_check(equip.get_attack_bonus() == 0, "空装攻击加成=0")
 	_check(equip.get_defense_bonus() == 0, "空装防御=0")
-	_check(equip.get_harvest_speed_multiplier(int(ResourceData.HarvestTool.AXE)) == 1.0, "空装采集倍率=1.0")
+	_check(equip.get_item(ItemData.EquipSlot.TOOL) == null, "空装工具槽为空")
 
-	_add(player, &"wooden_axe", 1)
-	equip.equip(&"wooden_axe")
+	_add(player, &"stone_axe", 1)
+	equip.equip(&"stone_axe")
 	_check(equip.get_attack_bonus() == 0, "斧头不提供攻击加成")
-	_check(_equip_harvest(equip, ResourceData.HarvestTool.AXE) == 1.5, "斧头对木材(匹配)倍率=1.5")
-	# 不匹配：斧头挖矿不加速
-	_check(_equip_harvest(equip, ResourceData.HarvestTool.PICKAXE) == 1.0, "斧头对矿物(不匹配)倍率=1.0")
+	_check(equip.get_tool_item().harvest_work == 4, "石斧每击工作量=4")
+	_check(equip.get_tool_item().tags.has(&"axe"), "石斧带 &\"axe\" 标签")
 
 	_add(player, &"stone_sword", 1)
 	equip.equip(&"stone_sword")
@@ -121,9 +181,6 @@ func _test_bonus_methods() -> void:
 
 	player.queue_free()
 	await process_frame
-
-func _equip_harvest(equip: PlayerEquipment, t: int) -> float:
-	return equip.get_harvest_speed_multiplier(t)
 
 # ----------------------------------------
 # 3. Physics 攻击 / 防御
@@ -163,59 +220,76 @@ func _test_physics_attack_defense() -> void:
 	await process_frame
 
 # ----------------------------------------
-# 4. ResourceEntity 采集耗时
+# 4. ResourceEntity 采集门槛与工作量
+#
+# 采集只有一套数值：资源 work_amount（血量）÷ 工具 harvest_work（每击伤害）= 要采几下。
+# 门槛只看工具标签白名单：树认 &"axe"，空手一概拒绝。
 # ----------------------------------------
-func _test_harvest_duration() -> void:
+func _test_harvest_work() -> void:
 	var tree = ResourceEntity.new()
 	var data: ResourceData = load("res://script/resources/data/tree_data.tres")
 	tree.resource_data = data
 	_check(is_instance_valid(data), "树资源数据加载成功")
+	_check(data.work_amount == 24, "树工作量=24")
 
-	# 无装备采集者
+	# 空手：门槛不通过（不允许开工），所以"每击 1 点"也无从谈起
 	var p1 := Node3D.new()
 	p1.add_to_group("player")
 	var e1 := Node.new(); e1.name = "Equipment"; p1.add_child(e1)
 	root.add_child(p1)
+	_check(not tree._is_tool_allowed(p1), "空手砍树被拒（树要 &\"axe\"）")
 
-	var t_no_tool := tree.get_harvest_duration(p1)
-	_check(absf(t_no_tool - 0.8) < 0.001, "无工具砍树耗时=基础0.8s (实际 %.2f)" % t_no_tool)
-
-	# 装备木斧（匹配）
+	# 装备石斧（命中白名单）
 	var p2 := Node3D.new()
 	p2.add_to_group("player")
 	var e2 = preload("res://script/player/equipment.gd").new(); e2.name = "Equipment"; p2.add_child(e2)
 	var inv2 = preload("res://script/inventory/inventory.gd").new(); inv2.name = "Inventory"; p2.add_child(inv2)
 	root.add_child(p2)
-	inv2.add_item(ItemRegistry.get_registry().get_item(&"wooden_axe"), 1)
-	e2.equip(&"wooden_axe")
-	var t_axe := tree.get_harvest_duration(p2)
-	_check(absf(t_axe - (0.8/1.5)) < 0.001, "木斧砍树耗时=0.53s (实际 %.2f)" % t_axe)
-	_check(t_axe < t_no_tool, "木斧比徒手更快")
+	inv2.add_item(ItemRegistry.get_registry().get_item(&"stone_axe"), 1)
+	e2.equip(&"stone_axe")
+	_check(tree._is_tool_allowed(p2), "装备石斧后允许砍树")
+	var per_hit := tree.get_work_per_hit(p2)
+	_check(per_hit == 4, "石斧每击 4 点（实际 %d）" % per_hit)
+	_check(ceili(float(data.work_amount) / float(per_hit)) == 6, "24 / 4 = 砍 6 次")
 
 	p1.queue_free(); p2.queue_free()
 	await process_frame
 
 # ----------------------------------------
-# 5. 集成：装备木斧后砍树确实更快（端到端）
+# 5. 集成：铁矿 / 煤矿与大石头同一套数值（石镐 6 次、铁镐 4 次）
 # ----------------------------------------
 func _test_harvest_integration() -> void:
-	# 用直接数值对比即可（harvest 是 await 协程，耗时对比在 _4 已覆盖）
-	var tree = ResourceEntity.new()
-	var data := load("res://script/resources/data/tree_data.tres") as ResourceData
-	tree.resource_data = data
-	root.add_child(tree)
-
 	var player := Node3D.new()
 	player.add_to_group("player")
 	var e = preload("res://script/player/equipment.gd").new(); e.name = "Equipment"; player.add_child(e)
 	var inv = preload("res://script/inventory/inventory.gd").new(); inv.name = "Inventory"; player.add_child(inv)
 	root.add_child(player)
-	inv.add_item(ItemRegistry.get_registry().get_item(&"wooden_axe"), 1)
-	e.equip(&"wooden_axe")
 
-	var dur := tree.get_harvest_duration(player)
-	_check(dur < 0.8, "集成：木斧装备后砍树耗时<0.8s (实际 %.2f)" % dur)
-	_check(tree._get_harvester_speed_multiplier(player) == 1.5, "集成：采集倍率取到1.5")
+	for res_path in [
+		"res://script/resources/data/stone_data.tres",
+		"res://script/resources/data/iron_ore_data.tres",
+		"res://script/resources/data/coal_data.tres",
+	]:
+		var entity = ResourceEntity.new()
+		var data := load(res_path) as ResourceData
+		entity.resource_data = data
+		root.add_child(entity)
+		_check(data.work_amount == 24, "%s 工作量沿用大石头=24" % data.resource_id)
+		_check(data.allowed_tool_tags.has(&"pickaxe"), "%s 认 &\"pickaxe\"" % data.resource_id)
+		_check(not entity._is_tool_allowed(player), "%s 空手被拒" % data.resource_id)
 
-	player.queue_free(); tree.queue_free()
+		inv.add_item(ItemRegistry.get_registry().get_item(&"stone_pickaxe"), 1)
+		e.equip(&"stone_pickaxe")
+		_check(entity._is_tool_allowed(player), "%s 石镐可挖" % data.resource_id)
+		_check(ceili(24.0 / float(entity.get_work_per_hit(player))) == 6, "%s 石镐 6 次" % data.resource_id)
+
+		e.unequip(ItemData.EquipSlot.TOOL)
+		inv.add_item(ItemRegistry.get_registry().get_item(&"iron_pickaxe"), 1)
+		e.equip(&"iron_pickaxe")
+		_check(ceili(24.0 / float(entity.get_work_per_hit(player))) == 4, "%s 铁镐 4 次" % data.resource_id)
+
+		e.unequip(ItemData.EquipSlot.TOOL)
+		entity.queue_free()
+
+	player.queue_free()
 	await process_frame

@@ -19,6 +19,5 @@ icon = ExtResource("2_icon")
 equip_slot = 1
 attack_bonus = 28
 defense_bonus = 0
-harvest_speed_bonus = 0.0
 tool_type = 0
 metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

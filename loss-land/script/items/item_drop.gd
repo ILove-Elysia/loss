@@ -53,6 +53,15 @@ var item_data: ItemData = null
 ## 携带的数量
 var count: int = 1
 
+## 携带的**物品实例**：只有"带运行时状态的特殊物品"（核心）才会带它。
+##
+## 核心的电量与温度值挂在实例上，所以掉在地上的核心也是一个**独立单位** ——
+## 它按自己所在位置的环境推进温度值、自己掉电（见 _tick_core），
+## 被捡起来时连状态一起进背包，不会"重新变回满电的新核心"。
+##
+## 普通物品（草、石头、电池…）没有任何运行时状态，这里保持 null，数量走 count。
+var instance: ItemInstance = null
+
 ## 出生计时
 var _age: float = 0.0
 
@@ -119,6 +128,12 @@ static func spawn_drop(item: ItemData, amount: int, world_position: Vector3) -> 
 	var drop := ItemDrop.new()
 	drop.item_data = item
 	drop.count = amount
+	# 携带电量的核心：同时带上物品实例 —— 电量与温度值都在实例上，
+	# 掉在地上的核心因此也是一个会自己冻着 / 烤着的独立单位。
+	# 核心不可堆叠（max_stack = 1），所以一件核心 = 一个实例、数量 1。
+	if item.carries_power:
+		drop.instance = ItemInstance.new(item, 1)
+		drop.count = 1
 	# 水平方向随机偏移一点点，多个掉落物不会完全重叠
 	var angle := randf() * TAU
 	var dist := randf() * 0.4
@@ -179,6 +194,10 @@ func _process(delta: float) -> void:
 		_visual.position.y = sin(_age * 3.0) * bob_amplitude
 		_visual.rotation.y += spin_speed * delta
 
+	# 掉在地上的核心：按**自己所在位置**的环境推进温度值、自己掉电。
+	# 所在区块被 WorldStreamer 卸载时节点移出场景树，这里自然跟着暂停。
+	_tick_core(delta)
+
 	# 靠近 + 按下拾取键才拾取（不再自动吸取）
 	if _nearby_player != null and not _being_collected:
 		if Input.is_action_just_pressed("pickup"):
@@ -211,11 +230,21 @@ func try_pickup(player_root: Node) -> int:
 		return 0
 
 	_pickup_pending = true
-	var taken: int = inventory.add_item(item_data, count)
+	var taken: int = 0
+	if instance != null:
+		# 带状态的特殊物品（核心）：**整件实例搬进背包**，
+		# 电量与温度值原样带走 —— 走 add_item 会按 id 新造一个满电核心。
+		if inventory.add_item_instance(instance):
+			taken = count
+			instance = null
+			count = 0
+	else:
+		# 普通物品：按数量添加，塞多少算多少（背包放不下的留在地上）
+		taken = inventory.add_item(item_data, count)
+		count -= taken
 	_pickup_pending = false
 
 	if taken > 0:
-		count -= taken
 		picked_up.emit(item_data, taken, count)
 		DebugConfig.log_msg(DebugConfig.CAT_ITEM, "[拾取] %s x%d%s", [
 			item_data.display_name, taken,
@@ -231,8 +260,49 @@ func try_pickup(player_root: Node) -> int:
 	return taken
 
 # ============================================
+# 公共方法 - 核心状态存档
+# ============================================
+
+## 携带的核心状态（存档用）。没带核心时返回 null。
+## 掉落物的核心是"独立单位"，读档必须把它的电量与温度值原样还原，
+## 否则读一次档，地上那枚用到一半的核心就自动满血了。
+func get_core_state() -> Variant:
+	if instance == null or instance.core == null:
+		return null
+	return instance.core.to_dict()
+
+
+## 从存档还原核心状态（读档专用）
+func restore_core_state(data: Dictionary) -> void:
+	if instance == null or instance.core == null or data.is_empty():
+		return
+	instance.core.from_dict(data)
+
+
+# ============================================
 # 私有方法
 # ============================================
+
+# ----------------------------------------
+# 推进自身携带的核心（只有核心掉落物会走到这里）
+#
+# 温度值按掉落物**自己的世界坐标**所在区域算：
+#   丢在火山口的核心会自己烤到过热掉电、丢在雪地里会冻到过冷掉电，
+#   与玩家跑到哪去没有关系 —— 这就是"核心是独立单位"的直接体现。
+#
+# 地图不可用（未加载 / 测试环境没有 map_gen）时整段跳过：
+# 宁可这一帧不算，也不要按错误的默认区域乱扣电。
+# ----------------------------------------
+func _tick_core(delta: float) -> void:
+	if instance == null or instance.core == null:
+		return
+	var map_gen := get_tree().get_first_node_in_group("map_gen")
+	if map_gen == null or not map_gen.has_method("get_terrain_world"):
+		return
+	var terrain: int = int(map_gen.call("get_terrain_world", global_position))
+	var coefficient: float = PowerCoreSystem.coefficient_at(global_position, terrain)
+	PowerCoreSystem.tick_core(instance.core, delta, coefficient)
+
 
 # ----------------------------------------
 # 构建视觉函数

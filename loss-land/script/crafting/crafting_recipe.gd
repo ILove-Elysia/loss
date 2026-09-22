@@ -35,13 +35,23 @@ enum Category {
 	BUILDING,   # 建筑（工作台、熔炉、储物箱）
 	SURVIVAL,   # 专属：求生制作（冒险家）
 	ALCHEMY,    # 专属：炼药 / 魔法（魔女）
-	MACHINE     # 专属：机械制作（机器人）
+	MACHINE,    # 专属：机械制作（机器人）
+	CORE        # 核心：装备核心后才出现的栏目（不按角色，按装备）
 }
 
-## 专属栏的第一个值 —— 大于等于它的都是"按角色过滤"的专属栏
+## 角色专属栏的起点 —— 大于等于它的都是"按角色过滤"的专属栏
 const FIRST_EXCLUSIVE: int = 5
 
-## 通用栏（不含专属栏）：合成 UI 建标签页时直接遍历这个数组，
+## 角色专属栏的终点（含）。**加核心栏时要把它固定住**，
+## 否则新追加的 CORE 会被当成角色专属栏处理，
+## 而角色注册表里并没有对应的 key，结果就是这一栏永远不可见。
+const LAST_EXCLUSIVE: int = 7
+
+## 核心栏：不看角色，看**装备了什么**（装上带 unlocks_core_tab 的核心才可见）。
+## 与角色专属栏是两套独立机制：专属栏问"你是谁"，核心栏问"你带了什么"。
+const CORE_TAB: int = 8
+
+## 通用栏（不含专属栏与核心栏）：合成 UI 建标签页时直接遍历这个数组，
 ## 加通用分类只改这里 + 上面的 enum 末尾。
 const COMMON_CATEGORIES: Array[int] = [
 	Category.MATERIAL, Category.TOOL, Category.WEAPON,
@@ -91,15 +101,26 @@ static func category_name(cat: Category) -> String:
 		Category.SURVIVAL: return "求生"
 		Category.ALCHEMY:  return "炼药"
 		Category.MACHINE:  return "机械"
+		Category.CORE:     return "核心"
 		_:                 return "其他"
 
 
 # ----------------------------------------
-# 是否专属栏函数
-# 专属栏（SURVIVAL / ALCHEMY / MACHINE）只对对应角色显示
+# 是否角色专属栏函数
+# 专属栏（SURVIVAL / ALCHEMY / MACHINE）只对对应角色显示。
+# 注意上界：核心栏排在枚举末尾但它**不是**角色专属栏，
+# 漏掉上界的话它会掉进角色过滤分支，而角色注册表里没有对应 key → 永远不可见。
 # ----------------------------------------
 static func is_exclusive(cat: int) -> bool:
-	return cat >= FIRST_EXCLUSIVE
+	return cat >= FIRST_EXCLUSIVE and cat <= LAST_EXCLUSIVE
+
+
+# ----------------------------------------
+# 是否核心栏函数
+# 核心栏靠"装备了什么"决定可见性，不看角色
+# ----------------------------------------
+static func is_core_tab(cat: int) -> bool:
+	return cat == CORE_TAB
 
 
 # ----------------------------------------

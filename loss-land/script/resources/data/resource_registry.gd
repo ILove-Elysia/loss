@@ -26,9 +26,19 @@ extends Resource
 
 # 资源预制体字典
 # 键是资源ID（StringName），值是预制体场景（PackedScene）
-# 示例：
-#   &"grass" -> grass_entity.tscn
-#   &"tree"  -> tree_entity.tscn
+#
+# 目前已有一类资源脱离通用预制体：
+#   &"tree"  ->  tscn/prefab/tree.tscn
+#       Node3D 根（ResourceEntity）+ AnimatedSprite3D（帧动画，Y 轴广告牌永远朝相机）
+#       + CharacterBody3D/CollisionShape3D（树干挡路，layer 2 = 地面/障碍）
+#       帧动画定义在 art/props/tree_1/tree_frames.tres
+# 其余 7 种仍统一用 tscn/resource_entity.tscn：
+#   &"grass" / &"stone" / &"pebble" / &"iron_ore" /
+#   &"coal" / &"berry" / &"twig"
+# 这些没有专用预制体的资源，外观由 ResourceData 的 growing_texture /
+# harvested_texture 决定；这两种贴图当前都未配，于是
+# ResourceVisual._build_placeholder_mesh() 生成程序化网格兜底。
+# （历史上曾有"一资源一预制体"的 grass_entity.tscn，已废弃移除）
 @export var resource_scenes: Dictionary[StringName, PackedScene] = {}
 
 # ============================================

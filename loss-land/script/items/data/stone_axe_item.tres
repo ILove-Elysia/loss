@@ -8,7 +8,7 @@ script = ExtResource("1_s")
 item_id = &"stone_axe"
 display_name = "石斧"
 description = "石制斧头，比木斧更趁手。
-效果：木材采集速度+100%。"
+砍树每次完成 4 点工作量（树 24 点 → 6 下）。"
 item_type = 1
 stackable = false
 max_stack = 1
@@ -19,6 +19,7 @@ icon = ExtResource("2_icon")
 equip_slot = 3
 attack_bonus = 0
 defense_bonus = 0
-harvest_speed_bonus = 1.0
 tool_type = 1
+tags = Array[StringName]([&"axe"])
+harvest_work = 4
 metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ResourceData" format=3]
+[gd_resource type="Resource" script_class="ResourceData" format=3 uid="uid://ce2b44t8oravt"]
 
 [ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_be"]
 
@@ -10,13 +10,10 @@ resource_type = 4
 growing_animation = "growing"
 harvested_animation = "broken"
 transition_duration = 0.4
-min_distance = 2.0
 initial_count = 200
-harvest_time = 0.4
-required_tool = 0
+work_amount = 1
+work_interval = 0.4
 drop_item_id = "berry"
-drop_count_min = 1
 drop_count_max = 2
-can_regenerate = true
 regeneration_time = 240.0
 metadata/_custom_type_script = "uid://bt0ggfep1hkdu"

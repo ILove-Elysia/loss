@@ -33,6 +33,22 @@ extends RefCounted
 static var _recipes: Array[CraftingRecipe] = []
 static var _built: bool = false
 
+## 「核心」制作栏是否解锁（装上带 unlocks_core_tab 的核心后由 PlayerEquipment 置位）。
+##
+## 为什么不在这里自己去找玩家装备：CraftingSystem 是纯静态类，没有场景引用；
+## 装备状态只有 PlayerEquipment 知道，由它在装备 / 卸下 / 读档恢复时推过来，
+## 无头测试里也能直接 set_core_unlocked(true) 验证核心栏，不依赖场景。
+static var core_tab_unlocked: bool = false
+
+
+## 设置核心栏解锁状态（由 PlayerEquipment 调用）
+static func set_core_unlocked(unlocked: bool) -> void:
+	if core_tab_unlocked == unlocked:
+		return
+	core_tab_unlocked = unlocked
+	DebugConfig.log_msg(DebugConfig.CAT_CRAFTING, "[合成] 核心制作栏 %s",
+		["已解锁" if unlocked else "已关闭"])
+
 
 # ============================================
 # 配方查询
@@ -85,6 +101,10 @@ static func get_recipes(category: int, char_id: String = "") -> Array[CraftingRe
 static func _is_recipe_visible(recipe: CraftingRecipe, char_id: String = "") -> bool:
 	if recipe == null:
 		return false
+	# 核心栏看"装备了什么"，不看角色，必须单独判——
+	# 否则它会落进下面的"非专属栏恒可见"分支，核心配方对所有人可见。
+	if CraftingRecipe.is_core_tab(int(recipe.category)):
+		return core_tab_unlocked
 	if not CraftingRecipe.is_exclusive(int(recipe.category)):
 		return true
 	if char_id.is_empty():
@@ -96,6 +116,8 @@ static func _is_recipe_visible(recipe: CraftingRecipe, char_id: String = "") -> 
 # 该分类对当前角色是否可见函数（合成 UI 建标签页时用）
 # ----------------------------------------
 static func is_category_visible(category: int, char_id: String = "") -> bool:
+	if CraftingRecipe.is_core_tab(int(category)):
+		return core_tab_unlocked
 	if not CraftingRecipe.is_exclusive(int(category)):
 		return true
 	if char_id.is_empty():
@@ -104,7 +126,7 @@ static func is_category_visible(category: int, char_id: String = "") -> bool:
 
 
 # ----------------------------------------
-# 当前角色能看到的全部分类函数（通用栏 + 他自己的专属栏）
+# 当前角色能看到的全部分类函数（通用栏 + 他自己的专属栏 + 已解锁的核心栏）
 # 合成 UI 遍历它建标签页；加新分类不用改 UI。
 # ----------------------------------------
 static func get_visible_categories(char_id: String = "") -> Array[int]:
@@ -115,6 +137,8 @@ static func get_visible_categories(char_id: String = "") -> Array[int]:
 	for c in [int(C.SURVIVAL), int(C.ALCHEMY), int(C.MACHINE)]:
 		if is_category_visible(int(c), char_id):
 			out.append(int(c))
+	if is_category_visible(int(C.CORE), char_id):
+		out.append(int(C.CORE))
 	return out
 
 
@@ -347,6 +371,7 @@ static func _build_recipes() -> void:
 	var SURV := CraftingRecipe.Category.SURVIVAL
 	var ALCH := CraftingRecipe.Category.ALCHEMY
 	var MACH := CraftingRecipe.Category.MACHINE
+	var CORE := CraftingRecipe.Category.CORE
 
 	# ---- 3.4.5 材料配方 ----
 	# 木棍：木材 x1 → 木棍 x1（大纲 3.4.2 也把木棍列在武器里，同一条配方）
@@ -367,14 +392,14 @@ static func _build_recipes() -> void:
 	# 空手撬小石块得石头、地上捡树枝得木棍 → 石斧砍树 → 木材 → 石镐挖大石与矿。
 	# （粗制石斧 / 木斧 / 木镐三档过渡工具已删除，石制工具直接顶替开局位。）
 	_add(&"stone_axe", &"stone_axe", 1, TOOL, [_mat(&"rock", 3), _mat(&"stick", 2)],
-		"木材采集速度+100%")
+		"砍树每次完成 4 点工作量")
 	_add(&"stone_pickaxe", &"stone_pickaxe", 1, TOOL, [_mat(&"rock", 3), _mat(&"stick", 2)],
-		"矿物采集速度+100%")
+		"挖矿每次完成 4 点工作量")
 	# 铁制工具：铁锭 x3 + 木棍 x2，需要熔炉（铁线的终点产物）
 	_add(&"iron_pickaxe", &"iron_pickaxe", 1, TOOL, [_mat(&"iron_ingot", 3), _mat(&"stick", 2)],
-		"矿物采集速度+150%", &"furnace")
+		"挖矿每次完成 6 点工作量", &"furnace")
 	_add(&"iron_axe", &"iron_axe", 1, TOOL, [_mat(&"iron_ingot", 3), _mat(&"stick", 2)],
-		"木材采集速度+150%", &"furnace")
+		"砍树每次完成 6 点工作量", &"furnace")
 
 	# ---- 3.4.2 武器配方 ----
 	_add(&"wooden_sword", &"wooden_sword", 1, WEAPON, [_mat(&"stick", 2)], "攻击力+10")
@@ -424,3 +449,13 @@ static func _build_recipes() -> void:
 	_add(&"repair_kit", &"repair_kit", 1, MACH,
 		[_mat(&"iron_ingot", 2), _mat(&"stick", 2)],
 		"现场修补外壳与关节，回复 40 点生命。")
+
+	# ---- 核心制作栏（大纲 3.6.7）----
+	# 与上面三个角色专属栏是**两套独立机制**：专属栏看"你是谁"，这栏看"你装备了什么"。
+	# 只有核心槽里装着带 unlocks_core_tab 的核心（动力核心 / 机械核心）才出现，
+	# 与当前玩的是哪个角色无关。
+	# 目前只有一条占位配方——核心的真正用途是给日后的耗电设备供能（规划中），
+	# 内容定稿后往这里加即可，机制不用动。
+	_add(&"thermal_underwear", &"thermal_underwear", 1, CORE,
+		[_mat(&"grass", 8), _mat(&"stick", 2)],
+		"粗织的贴身衣物，防御+2。保暖效果规划中。")

@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://cg1a0jbuu3lyo" path="res://script/items/data/item_data.gd" id="1_pc"]
+[ext_resource type="Texture2D" uid="uid://bpcore0land01" path="res://art/icons/power_core.png" id="2_icon"]
+
+[resource]
+script = ExtResource("1_pc")
+item_id = &"power_core"
+display_name = "动力核心"
+description = "来历不明的遗物，中央嵌着一枚仍在缓慢呼吸的青色光核。
+装备到核心槽：为身体接入一块外置电池（左上角会多出一行核心电量）。
+电量与温度值都是核心自己的属性，装在身上、放在背包、丢在地上都各自保留 ——
+把用了一半的核心拆下来再装回去，电量不会回满。
+核心自己的温度值低于 350（过冷）或高于 650（过热）时，每秒消耗 0.5 电量。
+装上它还会让合成界面多出一个「核心」栏目。
+来源：击败机械沙虫（规划中）。"
+item_type = 3
+rarity = 3
+stackable = false
+max_stack = 1
+usable = false
+consume_on_use = false
+buy_price = 0
+sell_price = 0
+equip_slot = 4
+unlocks_core_tab = true
+carries_power = true
+icon = ExtResource("2_icon")
+metadata/_custom_type_script = "uid://cg1a0jbuu3lyo"

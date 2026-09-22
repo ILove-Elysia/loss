@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ResourceData" format=3]
+[gd_resource type="Resource" script_class="ResourceData" format=3 uid="uid://ciqvng2pbles2"]
 
 [ext_resource type="Script" uid="uid://bt0ggfep1hkdu" path="res://script/resources/data/resource_data.gd" id="1_ys3r6"]
 
@@ -12,8 +12,8 @@ harvested_animation = "broken"
 transition_duration = 0.8
 min_distance = 4.0
 initial_count = 160
-harvest_time = 1.4
-required_tool = 2
+work_amount = 24
+allowed_tool_tags = Array[StringName]([&"pickaxe"])
 drop_item_id = "iron_ore"
 drop_count_max = 2
 can_regenerate = false

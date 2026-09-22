@@ -221,11 +221,19 @@ func collect_drops() -> Array:
 		if count <= 0:
 			continue
 		var p: Vector3 = _record_position(rec)
-		out.append({
+		var entry: Dictionary = {
 			"item_id": str(item.item_id),
 			"count": count,
 			"position": {"x": p.x, "y": p.y, "z": p.z},
-		})
+		}
+		# 核心掉落物：电量与温度值一起进档。
+		# 节点即使被挂起（移出场景树）对象仍在，状态照取得到 ——
+		# 挂起期间只是不推进，不是丢掉。
+		if node.has_method("get_core_state"):
+			var core_state = node.call("get_core_state")
+			if core_state != null:
+				entry["core"] = core_state
+		out.append(entry)
 	return out
 
 
@@ -259,6 +267,10 @@ func apply_drops(list: Array) -> void:
 		# 跳过出生保护期：读档后玩家可能就站在掉落物上，
 		# 不该让他干等 0.4 秒才能按空格
 		drop.set("_age", 10.0)
+		# 还原核心自己的状态（电量 + 温度值）
+		var core_state = e.get("core")
+		if core_state is Dictionary:
+			drop.call("restore_core_state", core_state)
 
 	_reindex_drops()
 	_suppress = false

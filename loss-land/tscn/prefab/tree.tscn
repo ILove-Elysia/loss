@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://ctree00000001"]
+
+[ext_resource type="Script" uid="uid://pppkk14n8a7f" path="res://script/resources/entity/resource_entity.gd" id="1_entity"]
+[ext_resource type="Resource" uid="uid://cdygm3o68cjv0" path="res://script/resources/data/tree_data.tres" id="2_data"]
+[ext_resource type="Script" uid="uid://dkkq2mvotprif" path="res://script/resources/component/resource_visual.gd" id="3_visual"]
+[ext_resource type="SpriteFrames" path="res://art/props/tree_1/tree_frames.tres" id="4_frames"]
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_trunk"]
+radius = 0.45
+height = 2.0
+
+[node name="Tree" type="Node3D"]
+script = ExtResource("1_entity")
+resource_data = ExtResource("2_data")
+
+[node name="Sprite" type="AnimatedSprite3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.756, 0)
+sprite_frames = ExtResource("4_frames")
+animation = &"growing"
+autoplay = "growing"
+billboard = 0
+alpha_cut = 2
+pixel_size = 0.004
+
+[node name="Visual" type="Node3D" parent="." node_paths=PackedStringArray("sprite")]
+script = ExtResource("3_visual")
+sprite = NodePath("../Sprite")
+
+[node name="CollisionBody" type="CharacterBody3D" parent="."]
+collision_layer = 2
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CollisionBody"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.0, 0)
+shape = SubResource("CylinderShape3D_trunk")

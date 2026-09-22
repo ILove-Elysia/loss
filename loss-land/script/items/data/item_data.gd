@@ -61,12 +61,13 @@ enum EquipSlot {
 	NONE,        # 不可装备（草、木材、电池等）
 	WEAPON,      # 武器槽（剑）——加攻击力
 	ARMOR,       # 护甲槽（衣服）——加防御
-	TOOL         # 工具槽（斧、镐）——加采集速度
+	TOOL,        # 工具槽（斧、镐）——每一下做掉多少工作量
+	CORE         # 核心槽（动力核心 / 机械核心）——开启电量或制作栏
 }
 
-# 工具类型：与 ResourceData.HarvestTool 的数值保持一致
+# 工具类型：只影响物品说明里"这是哪一类工具"那句话，不参与采集门槛判定
+# （门槛看资源侧的标签白名单）
 # 0=NONE 1=AXE 2=PICKAXE 3=SHOVEL 4=KNIFE
-# 只有工具类型与资源匹配时，采集速度加成才生效
 enum ToolType {
 	NONE = 0,
 	AXE = 1,
@@ -182,9 +183,9 @@ enum AccessPolicy {
 #
 # 只有 equip_slot != NONE 的物品才能装到玩家身上。
 # 数值由 PlayerEquipment 汇总后，交给战斗/采集系统消费：
-#   attack_bonus         → Physics 的最终攻击力
-#   defense_bonus        → Physics.take_damage 的减伤
-#   harvest_speed_bonus  → ResourceEntity 的采集耗时（仅工具类型匹配时）
+#   attack_bonus   → Physics 的最终攻击力
+#   defense_bonus  → Physics.take_damage 的减伤
+#   harvest_work   → 采集时每一次作业做掉多少工作量
 # ============================================
 @export_group("装备", "")
 
@@ -197,13 +198,41 @@ enum AccessPolicy {
 # 防御力加成（护甲槽生效，每次受伤减少的伤害值，至少仍会掉 1 点）
 @export var defense_bonus: int = 0
 
-# 采集速度加成倍率（工具槽生效）
-# 0.5 = 采集耗时缩短到 1/1.5，1.0 = 缩短到 1/2
-@export var harvest_speed_bonus: float = 0.0
-
-# 工具类型，决定对哪种资源生效
-# 须与 ResourceData.required_tool 的数值一致
+# 工具类型（斧 / 镐 / 铲 / 刀）：只用来在物品说明里写"这是哪一类工具"。
+# 能不能采某个资源不看它，看下面的标签白名单。
 @export var tool_type: ToolType = ToolType.NONE
+
+# 工具标签：资源侧"白名单"的唯一判据
+#
+# 资源填了 allowed_tool_tags 后，装备的工具只要带其中任意一个标签就能作业。
+# 目前斧头类统一挂 &"axe"、镐类统一挂 &"pickaxe"，
+# 将来某个资源想只认「铁器」、或者同时接受斧和刀，直接配标签就行，不用改代码。
+@export var tags: Array[StringName] = []
+
+# 每次采集完成的工作量（配合 ResourceData.work_amount 使用）
+#
+# 资源的 work_amount 相当于"血量"，本值相当于"每次攻击的伤害"：
+#   树 24 点 / 石斧 4 点 = 砍 6 次；铁斧 6 点 = 砍 4 次。
+# 0 = 这件工具不按工作量计（作业时直接一次采完，旧行为）。
+# 只有装备在工具槽、且通过资源的标签白名单时才被读取。
+@export var harvest_work: int = 0
+
+# 核心栏开关：装到「核心」槽后，是否让合成界面多出一个「核心」栏目。
+#
+# 为什么做成物品字段而不是写死"动力核心"这个 id：
+# 大纲里还有一件「机械核心」（击败机械沙虫掉落），同样是"装上就多一栏"。
+# 两者共用一个机制，将来加第三件核心也不用改代码。
+@export var unlocks_core_tab: bool = false
+
+# 是否**携带电量**：这件核心自带一块电池 + 一个独立温度值（PowerCoreInstance）。
+#
+# 为什么和 unlocks_core_tab 分开写：
+#   "解锁核心栏"是功能开关，"携带电量"是实体属性。将来若出一枚只负责解锁、
+#   不带电池的核心（或反过来），两者可以自由组合，不必改代码。
+#
+# 携带电量的物品一旦进入游戏（制作产出 / 掉落 / 测试箱 / 拾取 / 读档），
+# 都会自动挂上一枚满电的核心实例，见 ItemInstance 的 core 字段。
+@export var carries_power: bool = false
 
 # ============================================
 # 价值配置
@@ -258,11 +287,12 @@ func get_equip_slot_name() -> String:
 		EquipSlot.WEAPON: return "武器槽"
 		EquipSlot.ARMOR:  return "护甲槽"
 		EquipSlot.TOOL:   return "工具槽"
+		EquipSlot.CORE:   return "核心槽"
 		_:                return "不可装备"
 
 # ----------------------------------------
 # 获取工具类型名称函数
-# 用于拼采集速度的描述文本
+# 用于物品说明里描述"这件工具是干哪一行的"
 # ----------------------------------------
 func get_tool_type_name() -> String:
 	match tool_type:
@@ -346,9 +376,10 @@ func get_full_description() -> String:
 			text += "  攻击力 +%d\n" % attack_bonus
 		if defense_bonus != 0:
 			text += "  防御 +%d\n" % defense_bonus
-		if harvest_speed_bonus > 0.0:
-			text += "  %s采集速度 +%d%%\n" % [
-				get_tool_type_name(), int(harvest_speed_bonus * 100.0)]
+		# 核心槽不带数值，它的效果是"开关"，单独说清楚——
+		# 否则说明里只有一行"装备效果（核心槽）"后面空着，玩家看不出装它图什么。
+		if unlocks_core_tab:
+			text += "  解锁「核心」制作栏\n"
 
 	# 专属权限说明（决策 ⑦）：被拒 → 红字；能用且有专属加成 → 绿字；
 	# 普通物品（能用、无加成）不加任何行，避免说明里全是废话。

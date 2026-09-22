@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://db8r1pnvh275j"]
+
+[ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="1_5jxjy"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_j3pou"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_5jxjy"]
+size = Vector3(10, 1, 10)
+
+[sub_resource type="Environment" id="Environment_5jxjy"]
+ambient_light_source = 2
+ambient_light_color = Color(0.8289096, 0.82890964, 0.82890975, 1)
+ambient_light_energy = 9.0
+
+[sub_resource type="Compositor" id="Compositor_j3pou"]
+
+[node name="Node3D" type="Node3D" unique_id=272605664]
+
+[node name="Ground" type="StaticBody3D" parent="." unique_id=1844126410]
+collision_layer = 2
+collision_mask = 3
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=376418593]
+transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 6, 0.006177902, 1.1920929e-07, 0.0011007786)
+mesh = SubResource("PlaneMesh_j3pou")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1507836157]
+transform = Transform3D(-1, 0, 1.509958e-07, 0, 1, 0, -1.509958e-07, 0, -1, 0, 0, 0)
+shape = SubResource("BoxShape3D_5jxjy")
+
+[node name="player" parent="." unique_id=23778506 instance=ExtResource("1_5jxjy")]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1560085629]
+environment = SubResource("Environment_5jxjy")
+compositor = SubResource("Compositor_j3pou")

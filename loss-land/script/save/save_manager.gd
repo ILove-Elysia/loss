@@ -4,7 +4,7 @@
 #
 # 存什么（对应大纲存档需求）：
 #   meta      存档名 / 天数 / 保存时间（主菜单列表只用 meta）
-#   player    玩家位置（Physics）、生命、电量、体温、背包、装备三槽
+#   player    玩家位置（Physics）、生命、电量、温度值与体温、饱食度、背包、装备四槽
 #   world     昼夜时间（day/hour）+ 全部资源实体（位置/状态/再生倒计时，
 #             复用 ResourceManager.save_game / ResourceSaveData）
 #             + 敌人（位置/血量）+ 地面掉落物 + 相机角度与缩放
@@ -293,7 +293,7 @@ static func _make_meta(tree: SceneTree) -> Dictionary:
 	}
 
 
-## 玩家：位置（Physics 的世界坐标）/ 生命 / 电量 / 体温 / 背包 / 装备三槽
+## 玩家：位置（Physics 的世界坐标）/ 生命 / 电量 / 温度值·体温 / 背包 / 装备四槽
 static func _collect_player(tree: SceneTree) -> Dictionary:
 	var player: Node = tree.get_first_node_in_group("player")
 	if player == null:
@@ -308,27 +308,47 @@ static func _collect_player(tree: SceneTree) -> Dictionary:
 	if phys != null:
 		out["health"] = int(phys.get("current_health"))
 
-	# 电量 / 体温 / 饱食度（Vitals）
+	# 电量 / 温度值 / 体温 / 饱食度（Vitals）
 	var vitals: Node = player.get_node_or_null("Vitals")
 	if vitals != null:
 		out["power"] = float(vitals.get("current_power"))
+		# 温度与温度值是两个属性：前者是身体温度，后者是环境热负荷（决定前者怎么变）
+		out["temperature_value"] = float(vitals.get("current_temperature_value"))
 		out["temperature"] = float(vitals.get("current_temperature"))
 		out["hunger"] = float(vitals.get("current_hunger"))
+		# 注意：这里**不再存 has_power**。
+		# "有没有电"现在是运行时算出来的（内置电量 or 装着核心），
+		# 核心状态跟着装备槽一起进档，读档后自然还原，不需要单独一个开关字段。
 
 	# 背包（Inventory 自带 save/load_data）
 	var inv: Node = player.get_node_or_null("Inventory")
 	if inv != null and inv.has_method("save"):
 		out["inventory"] = inv.call("save")
 
-	# 装备三槽：只存 item_id，恢复时先塞回背包再走正常 equip 流程
+	# 装备四槽：存**物品实例**（核心的电量 / 温度值都在实例上）。
+	# 只存 item_id 的话，读档会给核心造一个全新的满电实例，
+	# "核心是独立单位"就白做了。老存档这一格是字符串，读档时兼容（见 _apply_player）。
 	var equip: Node = player.get_node_or_null("Equipment")
 	if equip != null:
 		out["equipment"] = {
-			"weapon": str(equip.call("get_item_id", int(ItemData.EquipSlot.WEAPON))),
-			"armor": str(equip.call("get_item_id", int(ItemData.EquipSlot.ARMOR))),
-			"tool": str(equip.call("get_item_id", int(ItemData.EquipSlot.TOOL))),
+			"weapon": _collect_equip_slot(equip, int(ItemData.EquipSlot.WEAPON)),
+			"armor": _collect_equip_slot(equip, int(ItemData.EquipSlot.ARMOR)),
+			"tool": _collect_equip_slot(equip, int(ItemData.EquipSlot.TOOL)),
+			"core": _collect_equip_slot(equip, int(ItemData.EquipSlot.CORE)),
 		}
 	return out
+
+
+## 单个装备槽 → 存档数据。
+## 空槽返回空字符串（与老格式一致，肉眼读档也更清爽），满槽返回实例字典。
+static func _collect_equip_slot(equip: Node, slot: int) -> Variant:
+	if not equip.has_method("get_instance"):
+		# 老版本没有 get_instance：退回只存 item_id
+		return str(equip.call("get_item_id", slot))
+	var inst = equip.call("get_instance", slot)
+	if inst == null or inst.get("data") == null:
+		return ""
+	return inst.call("to_dict")
 
 
 ## 世界：昼夜时间 + 全部资源实体（ ResourceManager.save_game 的结构）
@@ -463,11 +483,18 @@ static func _collect_drops(tree: SceneTree) -> Array:
 		if item == null or int(d.get("count")) <= 0:
 			continue
 		var p: Vector3 = d.position
-		out.append({
+		var entry: Dictionary = {
 			"item_id": str(item.item_id),
 			"count": int(d.get("count")),
 			"position": {"x": p.x, "y": p.y, "z": p.z},
-		})
+		}
+		# 核心掉落物：连电量与温度值一起存。核心是独立单位，
+		# 不给它存状态的话，读一次档地上那枚用了一半的核心就自动满电了。
+		if d.has_method("get_core_state"):
+			var core_state = d.call("get_core_state")
+			if core_state != null:
+				entry["core"] = core_state
+		out.append(entry)
 	return out
 
 
@@ -594,6 +621,10 @@ static func _apply_drops(tree: SceneTree, list: Array) -> void:
 		# 跳过出生保护期：读档后玩家可能就站在掉落物上，
 		# 不该让他干等 0.4 秒才能按空格
 		drop.set("_age", 10.0)
+		# 还原核心自己的状态（电量 + 温度值），核心掉落物才不会被读档回满
+		var core_state = e.get("core")
+		if core_state is Dictionary:
+			drop.call("restore_core_state", core_state)
 
 
 ## 相机：把 yaw / zoom 直接写进内部状态（同时写目标值与当前值，
@@ -611,6 +642,10 @@ static func _apply_camera(tree: SceneTree, data: Dictionary) -> void:
 		c.set("_yaw", yaw)
 		c.set("_target_zoom", zoom)
 		c.set("_zoom", zoom)
+		# 老存档可能是在"连续旋转不归位"的旧版里存的，yaw 是任意角度 →
+		# 读进来后大小地图（跟随相机 yaw）是歪的。这里统一归到最近档位。
+		if c.has_method("snap_yaw_to_step"):
+			c.call("snap_yaw_to_step")
 		return
 
 
@@ -662,18 +697,6 @@ static func _apply_player(tree: SceneTree, player_data: Dictionary) -> void:
 		if phys.has_method("_update_hud_health"):
 			phys.call("_update_hud_health")
 
-	# 电量 / 体温 / 饱食度
-	var vitals: Node = player.get_node_or_null("Vitals")
-	if vitals != null:
-		if player_data.has("power") and vitals.has_method("set_power"):
-			vitals.call("set_power", float(player_data.get("power")))
-		if player_data.has("temperature"):
-			vitals.set("current_temperature", float(player_data.get("temperature")))
-		# 走 set_hunger 而不是直接写变量：它会发 hunger_changed，
-		# HUD 的 _last_hunger_shown 缓存才会被刷新（旧存档没这个字段则保持满值）
-		if player_data.has("hunger") and vitals.has_method("set_hunger"):
-			vitals.call("set_hunger", float(player_data.get("hunger")))
-
 	# 背包
 	var inv: Node = player.get_node_or_null("Inventory")
 	if inv != null and inv.has_method("load_data") and player_data.has("inventory"):
@@ -685,6 +708,14 @@ static func _apply_player(tree: SceneTree, player_data: Dictionary) -> void:
 
 	# 装备：直接写槽位，不走 equip()
 	# （equip 要先从背包取 1 件，读档时背包常常是满的，会静默丢装备）
+	#
+	# ⚠ 顺序：装备恢复排在「电量」之前 —— 核心槽一变，Vitals 就会重算
+	# "有没有电"并刷 HUD。先摆好装备再写数值，读档期间就不会出现
+	# "先亮起、后熄灭"的一帧闪烁。
+	#
+	# 槽里存的是**物品实例**（核心的电量 / 温度值都在实例上）。
+	# 老存档这一格是纯 item_id 字符串，走下面的兼容分支：
+	# 那种档里的核心当然没有状态可恢复，按出厂满电处理即可。
 	var equip: Node = player.get_node_or_null("Equipment")
 	if equip != null and player_data.has("equipment"):
 		var eq: Dictionary = player_data.get("equipment", {})
@@ -692,24 +723,79 @@ static func _apply_player(tree: SceneTree, player_data: Dictionary) -> void:
 			"weapon": int(ItemData.EquipSlot.WEAPON),
 			"armor": int(ItemData.EquipSlot.ARMOR),
 			"tool": int(ItemData.EquipSlot.TOOL),
+			"core": int(ItemData.EquipSlot.CORE),
 		}
 		for key in slots:
-			var item_id := StringName(String(eq.get(key, "")))
+			var raw = eq.get(key, "")
+			var slot: int = int(slots[key])
+
+			# 新格式：物品实例字典
+			if raw is Dictionary:
+				var d: Dictionary = raw
+				if d.is_empty():
+					continue
+				var inst := ItemInstance.new()
+				if not inst.from_dict(d):
+					DebugConfig.warn_msg(DebugConfig.CAT_UI,
+						"[存档] 装备恢复失败：物品实例无效（槽 %d）", [slot])
+					continue
+				if equip.has_method("set_slot_instance"):
+					equip.call("set_slot_instance", slot, inst)
+				continue
+
+			# 老格式：只有 item_id
+			var item_id := StringName(String(raw))
 			if item_id == &"":
 				continue
-			var registry = ItemRegistry.get_registry()
-			if registry == null:
-				break
-			var item_data = registry.get_item(item_id)
-			if item_data == null:
-				DebugConfig.warn_msg(DebugConfig.CAT_UI, "[存档] 装备恢复失败：未知物品 %s", [item_id])
-				continue
-			# 有 set_slot_item 就直接写槽；老版本没有该方法时退回 equip 流程
-			if equip.has_method("set_slot_item"):
-				equip.call("set_slot_item", int(slots[key]), item_data)
-			elif inv != null:
-				inv.call("add_item", item_data, 1)
-				equip.call("equip", item_id)
+			_restore_equip_slot_by_id(equip, slot, item_id, inv)
+
+	# 无条件重算一次核心槽状态。上面的循环只处理"槽里真有东西"的情况，
+	# 读一个没装核心的档时它整段跳过 —— 那样上一档留下的
+	# 外置电量与「核心」制作栏就会跟着串到这一档来。
+	if equip != null and equip.has_method("resync_core_state"):
+		equip.call("resync_core_state")
+
+	# 电量 / 温度值 / 体温 / 饱食度
+	var vitals: Node = player.get_node_or_null("Vitals")
+	if vitals != null:
+		# 这里只还原**自身电量**（内置电量的机器人）。
+		# 核心电量不在这里 —— 它随核心实例一起从装备槽恢复（见上一步），
+		# "有没有电"也由装备推导，不再有单独的开关字段要还原。
+		if player_data.has("power") and vitals.has_method("set_power"):
+			vitals.call("set_power", float(player_data.get("power")))
+		# 温度值先于体温还原（体温怎么走由温度值档位决定，顺序反了没有实质影响，
+		# 但保持"因 → 果"的顺序更不容易在以后改坏）。都走 setter 以刷新信号缓存。
+		# 老存档没有 temperature_value → 保持 _ready 的初值（500 = 正常档）。
+		if player_data.has("temperature_value") and vitals.has_method("set_temperature_value"):
+			vitals.call("set_temperature_value", float(player_data.get("temperature_value")))
+		if player_data.has("temperature") and vitals.has_method("set_temperature"):
+			vitals.call("set_temperature", float(player_data.get("temperature")))
+		# 走 set_hunger 而不是直接写变量：它会发 hunger_changed，
+		# HUD 的 _last_hunger_shown 缓存才会被刷新（旧存档没这个字段则保持满值）
+		if player_data.has("hunger") and vitals.has_method("set_hunger"):
+			vitals.call("set_hunger", float(player_data.get("hunger")))
+
+
+## 老存档的装备格（纯 item_id 字符串）恢复：查注册表拿物品数据再写槽。
+##
+## 为什么单独一个函数：新格式走实例、老格式走 item_id，
+## 两条路径的失败处理不一样（老格式查不到物品时只能警告跳过）。
+static func _restore_equip_slot_by_id(
+		equip: Node, slot: int, item_id: StringName, inv: Node) -> void:
+	var registry = ItemRegistry.get_registry()
+	if registry == null:
+		return
+	var item_data = registry.get_item(item_id)
+	if item_data == null:
+		DebugConfig.warn_msg(DebugConfig.CAT_UI,
+			"[存档] 装备恢复失败：未知物品 %s", [item_id])
+		return
+	# 有 set_slot_item 就直接写槽；老版本没有该方法时退回 equip 流程
+	if equip.has_method("set_slot_item"):
+		equip.call("set_slot_item", slot, item_data)
+	elif inv != null:
+		inv.call("add_item", item_data, 1)
+		equip.call("equip", item_id)
 
 
 ## 建筑：按存档重放 Building.spawn；储物箱内容直接 load_data 回填

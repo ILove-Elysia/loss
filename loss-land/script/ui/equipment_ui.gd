@@ -6,6 +6,7 @@
 #   标题 + 关闭按钮
 #   属性总览：攻击力 / 防御 / 采集加速（按工具类型分列）
 #   三个已装备槽位：武器 / 护甲 / 工具（有装备显示图标+名称，点击卸下）
+#   外加核心槽：动力核心 / 机械核心的装入与拆除入口
 #   背包可装备列表：当前背包里所有可装备物品，点击装备
 #
 # 与合成 UI / 背包 UI 保持一致的三个约定：
@@ -52,11 +53,14 @@ var equipment: PlayerEquipment:
 			if not equipment.equipment_changed.is_connected(_on_equipment_changed):
 				equipment.equipment_changed.connect(_on_equipment_changed)
 
-## 三个槽位枚举
+## 四个槽位枚举
+## 核心槽不提供数值加成，但它要出现在这里：装备界面是玩家"装入 / 拆除核心"
+## 的唯一入口（点击槽位 = 卸下），漏掉它就只能装、不能拆。
 const _SLOTS: Array[int] = [
 	ItemData.EquipSlot.WEAPON,
 	ItemData.EquipSlot.ARMOR,
 	ItemData.EquipSlot.TOOL,
+	ItemData.EquipSlot.CORE,
 ]
 
 # --- UI 节点 ---
@@ -204,7 +208,7 @@ func _make_dark_style() -> StyleBoxFlat:
 	return s
 
 
-## 构建三个装备槽位（武器/护甲/工具）
+## 构建装备槽位（武器/护甲/工具/核心）
 func _build_slots(container: Node) -> void:
 	for slot in _SLOTS:
 		var box := VBoxContainer.new()
@@ -246,12 +250,13 @@ func _build_slots(container: Node) -> void:
 		_slot_name[slot] = name
 
 
-## 槽位标签文字（武器/护甲/工具）
+## 槽位标签文字（武器/护甲/工具/核心）
 func _slot_label_text(slot: int) -> String:
 	match slot:
 		ItemData.EquipSlot.WEAPON: return "武器"
 		ItemData.EquipSlot.ARMOR:  return "护甲"
 		ItemData.EquipSlot.TOOL:   return "工具"
+		ItemData.EquipSlot.CORE:   return "核心"
 		_: return "?"
 
 
@@ -267,30 +272,17 @@ func _refresh_all() -> void:
 	_refresh_equip_list()
 
 
-## 属性总览：攻击 / 防御 / 各工具采集加速
+## 属性总览：攻击 / 防御
 func _refresh_stats() -> void:
 	var atk := 0
 	var def := 0
-	var harvest: Dictionary = {}   # tool_type_name -> bonus(float)
 	if equipment != null:
 		atk = equipment.get_attack_bonus()
 		def = equipment.get_defense_bonus()
-		for slot in _SLOTS:
-			var item: ItemData = equipment.get_item(slot)
-			if item != null and item.harvest_speed_bonus > 0.0:
-				var tname := item.get_tool_type_name()
-				if tname.is_empty():
-					tname = "采集"
-				harvest[tname] = item.harvest_speed_bonus
 
 	var lines := PackedStringArray()
 	lines.append("攻击力  +%d" % atk)
 	lines.append("防御力  +%d" % def)
-	if harvest.is_empty():
-		lines.append("采集加速  无")
-	else:
-		for tname in harvest.keys():
-			lines.append("%s采集加速  +%d%%" % [tname, int(harvest[tname] * 100.0)])
 	_stat_label.text = "\n".join(lines)
 
 

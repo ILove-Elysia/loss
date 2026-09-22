@@ -29,6 +29,15 @@ GDScript 静态自检（无需 Godot 可执行文件）
                      `var attack_dir := ...` 整份脚本编译不过 → 所有按钮点了
                      都没反应（黑屏级别的事故，但缩进/括号全是"正常"的）。
                      所以凡是 `:=` 右侧为 Variant 的写法都要显式标类型。
+  7. 不存在的 f 后缀数学函数 —— `sinf()` / `asinf()` / `sqrtf()` 这类名字
+                     Godot 里**没有**，报
+                     `Parser Error: Function "asinf" not found in base self.`，
+                     同样整份脚本解析失败。真实事故：sprite_facing.gd 里写了
+                     asinf/cosf/sinf，它是三方共用的朝向求解器，一挂就是
+                     "贴图朝向不对 + 砍伐动画丢失"，看着完全不像语法错。
+                     记住：**只有同时有 Variant 重载的函数才有 f 变体**
+                     （absf/ceilf/clampf/floorf/lerpf/maxf/minf/roundf/signf/
+                     snappedf/wrapf），三角函数/开方/对数/幂从来没有。
 
 用法
 ----
@@ -272,6 +281,43 @@ VARIANT_BUILTINS = re.compile(
     r"|FileAccess\.get_var"
     r"|Object\.(?:get|call))")
 
+## float/Variant **双签名**的 @GlobalScope 数学函数。
+## 这些函数同时有 `f(x: float) -> float` 和 `f(x: Variant) -> Variant` 两个重载，
+## 配 `:=` 时编辑器按 Variant 重载推断 → 报 "The variable type is being inferred
+## from a Variant value"（该项目把此 WARNING 当 ERROR，camera_3d.gd 翻过车）。
+## 一律用带后缀的明确版本：floorf / ceilf / roundf / absf / signf / snappedf /
+## minf / maxf / clampf / lerpf / wrapf（floori/absi/roundi/snappedi 也明确）。
+##
+## 名单来自 4.7 官方 @GlobalScope.xml 实测（2026-09-22）：
+##   返回 Variant **且**存在 f 变体的函数恰好是下面 11 个。
+##   ⚠ pow / sqrt 只有 `(float) -> float` 单一签名，**没有 powf / sqrtf**，
+##     把它们列进来会误导人去写不存在的函数名（本项目真实事故：
+##     sprite_facing.gd 照着这里的提示写了 asinf / cosf → 直接解析失败）。
+DUAL_SIGN_MATH = frozenset({
+    "floor", "ceil", "round", "sign", "abs", "snapped",
+    "min", "max", "clamp", "lerp", "wrap"})
+
+## 双签名函数 → 它的 float 明确版本（用于错误提示里的"用 xxx"建议）
+F_VARIANT_OF = {
+    "floor": "floorf", "ceil": "ceilf", "round": "roundf", "sign": "signf",
+    "abs": "absf", "snapped": "snappedf", "min": "minf", "max": "maxf",
+    "clamp": "clampf", "lerp": "lerpf", "wrap": "wrapf",
+}
+
+## 4.x 里**只有 float 签名、没有 f 变体**的数学函数（同样来自 4.7 XML 实测）。
+## 写 asinf / cosf / tanf / sqrtf / powf / expf / logf / deg2radf 之类的后果是
+## 编译期 `Parser Error: Function "asinf" not found in base self`，
+## **整个脚本解析失败** —— 它挂的实体全都变成灰盒/静止，现象看着完全不像语法错。
+## （4.7 全部 f 后缀全局函数只有：absf ceilf clampf floorf lerpf maxf minf
+##   randf roundf signf snappedf wrapf）
+FLOAT_ONLY_MATH = frozenset({
+    "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+    "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+    "sqrt", "pow", "exp", "log", "log2", "deg2rad", "rad2deg"})
+
+## 匹配 `<名字>f(`；非贪婪捕获保证 asinf( 捕到 asin 而不是 asinf 之外的东西
+BAD_F_CALL_RE = re.compile(r"\b([A-Za-z_]\w*?)f\s*\(")
+
 
 def _collect_func_returns(scripts):
     """扫全项目函数定义，分出「有返回类型标注」与「没有的」。
@@ -340,6 +386,10 @@ def check_type_inference(scripts):
             where = ""
             if callee.endswith(".get") or callee.endswith(".call"):
                 where = "%s 返回 Variant（Dictionary/Object 取成员）" % callee
+            elif callee in DUAL_SIGN_MATH:
+                where = ("%s() 是 float/Variant 双签名，:= 会推断成 Variant"
+                         "（用 %s 或显式标类型）"
+                         % (callee, F_VARIANT_OF.get(callee, callee + "f")))
             elif VARIANT_BUILTINS.match(callee):
                 where = "%s 返回 Variant" % callee
             else:
@@ -350,6 +400,41 @@ def check_type_inference(scripts):
             if where:
                 bad.append((p, i, "var %s := %s  —— %s，改成 `var %s: <类型> = ...`"
                             % (name, expr[:56], where, name)))
+    return bad
+
+
+def check_phantom_f_funcs(scripts):
+    """找 `asinf()` / `cosf()` / `sqrtf()` 这类**根本不存在**的 f 后缀数学调用。
+
+    真实事故（2026-09-22）：sprite_facing.gd 写了 `asinf()` 与 `cosf()/sinf()`，
+    Godot 报 `Parser Error: Function "asinf" not found in base self.`，
+    **整份脚本解析失败**。它恰好是玩家/树/史莱姆共用的朝向求解器，
+    一挂就表现为"贴图朝向不对、砍伐动画没有、实体集体异常"，
+    现象完全不像语法错，很容易去别处找原因。
+
+    这类名字看起来"很 Godot"——因为 absf / floorf / ceilf / clampf / lerpf
+    确实存在——所以最容易顺手写错。区别在于：
+    只有**同时存在 Variant 重载**的函数才有 f 变体（见 DUAL_SIGN_MATH），
+    三角函数/开方/对数/幂这些从一开始就只有 float 签名，本来就不需要 f。
+    """
+    defined = set()
+    for p in scripts:
+        for raw in io.open(p, encoding="utf-8").read().split("\n"):
+            m = FUNC_DEF_RE.match(strip_code(raw).strip())
+            if m:
+                defined.add(m.group(1))
+
+    bad = []
+    for p in scripts:
+        for i, raw in enumerate(io.open(p, encoding="utf-8").read().split("\n"), 1):
+            for m in BAD_F_CALL_RE.finditer(strip_code(raw)):
+                base = m.group(1)
+                if base not in FLOAT_ONLY_MATH:
+                    continue
+                name = base + "f"
+                if name in defined:
+                    continue  # 项目自己定义了这个名字，不归本检查管
+                bad.append((p, i, name, base))
     return bad
 
 
@@ -364,7 +449,7 @@ def main():
 
     print("扫描 %d 个脚本……" % len(scripts))
 
-    print("\n[1/6] 缩进跳变")
+    print("\n[1/7] 缩进跳变")
     before = problems
     for p in scripts:
         text = io.open(p, encoding="utf-8").read()
@@ -376,7 +461,7 @@ def main():
         print("  OK")
 
     before = problems
-    print("\n[2/6] 括号平衡")
+    print("\n[2/7] 括号平衡")
     for p in scripts:
         text = io.open(p, encoding="utf-8").read()
         d1, d2 = check_balance(text)
@@ -387,7 +472,7 @@ def main():
         print("  OK")
 
     before = problems
-    print("\n[3/6] 不可见空白字符")
+    print("\n[3/7] 不可见空白字符")
     for p in scripts:
         text = io.open(p, encoding="utf-8").read()
         for lineno, what in check_invisible(text):
@@ -397,7 +482,7 @@ def main():
         print("  OK")
 
     before = problems
-    print("\n[4/6] class_name 缓存一致性")
+    print("\n[4/7] class_name 缓存一致性")
     missing, stale = check_class_cache(scripts)
     for m in missing:
         print("  缺失：%s" % m)
@@ -409,7 +494,7 @@ def main():
         print("  OK")
 
     before = problems
-    print("\n[5/6] Vector2/Vector3 成员误用")
+    print("\n[5/7] Vector2/Vector3 成员误用")
     for p in scripts:
         text = io.open(p, encoding="utf-8").read()
         for lineno, msg in check_vector_members(text):
@@ -419,9 +504,17 @@ def main():
         print("  OK")
 
     before = problems
-    print("\n[6/6] := 类型推断（右侧为 Variant 会让整个脚本解析失败）")
+    print("\n[6/7] := 类型推断（右侧为 Variant 会让整个脚本解析失败）")
     for p, lineno, msg in check_type_inference(scripts):
         print("  %s:%d  %s" % (p, lineno, msg))
+        problems += 1
+    if problems == before:
+        print("  OK")
+
+    before = problems
+    print("\n[7/7] 不存在的 f 后缀数学函数（sinf/asinf/sqrtf 一律解析失败）")
+    for p, lineno, name, base in check_phantom_f_funcs(scripts):
+        print("  %s:%d  %s() 不存在，改用 %s()" % (p, lineno, name, base))
         problems += 1
     if problems == before:
         print("  OK")

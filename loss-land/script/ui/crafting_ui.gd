@@ -65,6 +65,11 @@ var _tab_bar: HBoxContainer
 var _title_label: Label
 ## 标签页是按哪个角色建的；与当前角色不一致时重建（换档等场景）
 var _tabs_char_id: String = ""
+## 建标签时核心栏是否已解锁。
+## 核心栏由**装备**决定（见 3.6.7），玩家可能在面板关着的时候装上 / 拆下核心，
+## 所以它和角色一样要参与"要不要重建标签"的判断 —— 只盯角色的话，
+## 装上核心后标签栏不会变，玩家以为核心没用。
+var _tabs_core_unlocked: bool = false
 
 # 颜色：材料足够用绿色，不足用红色
 const COLOR_OK := Color(0.45, 0.95, 0.45)
@@ -407,11 +412,13 @@ func _refresh_all() -> void:
 	if not is_instance_valid(_recipe_list):
 		return
 
-	# 角色换了（读别的档 / 以后装入动力核心）→ 专属栏标签与配方表都要重建。
+	# 角色换了（读别的档）或核心栏解锁状态变了（装 / 拆了核心）→ 标签与配方表重建。
 	# 平时只刷配色和详情，避免每次背包变动都重建按钮（重建会抢键盘焦点）。
 	var cid := CharacterRegistry.get_active_id()
-	if cid != _tabs_char_id:
+	var core_tab := CraftingSystem.core_tab_unlocked
+	if cid != _tabs_char_id or core_tab != _tabs_core_unlocked:
 		_tabs_char_id = cid
+		_tabs_core_unlocked = core_tab
 		_category = -1
 		_update_title()
 		_build_tabs()

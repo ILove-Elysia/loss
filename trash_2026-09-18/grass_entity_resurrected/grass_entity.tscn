@@ -1,0 +1,73 @@
+[gd_scene format=3 uid="uid://bxg6ajquglnis"]
+
+[ext_resource type="Script" uid="uid://pppkk14n8a7f" path="res://script/resources/entity/resource_entity.gd" id="1_etel3"]
+[ext_resource type="Script" uid="uid://bufbhtwjff45w" path="res://script/resources/component/resource_state_machine.gd" id="2_ifuh5"]
+[ext_resource type="Script" uid="uid://cb8ain2brbpia" path="res://script/resources/component/resource_interaction.gd" id="3_5j0li"]
+[ext_resource type="Script" uid="uid://dkkq2mvotprif" path="res://script/resources/component/resource_visual.gd" id="3_ifuh5"]
+[ext_resource type="Texture2D" path="res://art/oak_woods_v1.0/decorations/grass_1.png" id="4_8orx2"]
+[ext_resource type="Script" uid="uid://cayrkosr8ha1m" path="res://script/resources/component/resource_regeneration.gd" id="4_s506x"]
+[ext_resource type="Texture2D" path="res://art/oak_woods_v1.0/decorations/grass_2.png" id="5_hkc52"]
+[ext_resource type="Texture2D" path="res://art/oak_woods_v1.0/decorations/grass_3.png" id="6_0d21p"]
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_3xd07"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("4_8orx2")
+}, {
+"duration": 1.0,
+"texture": ExtResource("5_hkc52")
+}, {
+"duration": 1.0,
+"texture": ExtResource("6_0d21p")
+}],
+"loop": 1,
+"name": &"default",
+"speed": 5.0
+}]
+
+[sub_resource type="Animation" id="Animation_ny6ki"]
+resource_name = "new_animation"
+tracks/0/type = "position_3d"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Sprite")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = PackedFloat32Array()
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_wjqat"]
+_data = {
+&"new_animation": SubResource("Animation_ny6ki")
+}
+
+[node name="GrassEntity" type="Node3D" unique_id=347815542]
+script = ExtResource("1_etel3")
+
+[node name="ResourceStateMachine" type="Node" parent="." unique_id=993844365]
+script = ExtResource("2_ifuh5")
+metadata/_custom_type_script = "uid://bufbhtwjff45w"
+
+[node name="Visual" type="Node3D" parent="." unique_id=891526125 node_paths=PackedStringArray("sprite", "animation_player")]
+script = ExtResource("3_ifuh5")
+sprite = NodePath("Sprite")
+animation_player = NodePath("AnimationPlayer")
+
+[node name="Sprite" type="AnimatedSprite3D" parent="Visual" unique_id=571041470]
+sprite_frames = SubResource("SpriteFrames_3xd07")
+frame_progress = 0.7020199
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="Visual" unique_id=1806216566]
+libraries/ = SubResource("AnimationLibrary_wjqat")
+
+[node name="Interaction" type="Node" parent="." unique_id=1287672033]
+script = ExtResource("3_5j0li")
+
+[node name="Area" type="Area3D" parent="Interaction" unique_id=1299109688]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Interaction/Area" unique_id=1446289622]
+
+[node name="Regeneration" type="Node" parent="." unique_id=966108521]
+script = ExtResource("4_s506x")
+
+[node name="Timer" type="Timer" parent="Regeneration" unique_id=977094655]

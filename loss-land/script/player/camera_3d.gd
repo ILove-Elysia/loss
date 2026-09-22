@@ -11,10 +11,13 @@
 #      角色在死区半径内移动时相机完全不动，走出了才把焦点拖到死区边缘。
 #      于是小碎步、微调站位不会让整个画面跟着抖，只有真正"走远了"镜头才跟。
 #
-#   3. 固定俯角
-#      机位 = 焦点 + 固定偏移，视线永远看向焦点，所以视线方向恒定。
+#   3. 俯角随缩放联动（饥荒的 "Pitch Angle Method = Variable"）
+#      机位 = 焦点 + 由俯角算出的偏移，视线永远看向焦点，所以视线方向恒定。
 #      角色上下起伏（坡地/跳跃）只会让画面上下平移，不会改变俯角——
 #      不像每帧 look_at(角色) 那样，角色一跳镜头就上下点头。
+#      而俯角自己会随 zoom 变：推近时放平（看得远），拉远时抬高（接近俯视）。
+#      这正是"拉远看起来像在看地图"的来源，俯角范围 30° ~ 55°
+#      （2026-09-22 从 60° 收窄，原因见下方 pitch_far_degrees 的说明）。
 #
 # 另外两处细节改动：
 #   · 移动前瞻：走得越快看得越远，跑动时前方留白更多。
@@ -63,11 +66,32 @@ extends Camera3D
 
 # ---------------- 机位 ----------------
 
-## 相机相对焦点的偏移（身后上方）。整体按 zoom 等比缩放，方向不变。
-@export var base_offset: Vector3 = Vector3(0, 5, -8)
+## 机位到焦点的距离（米）。实际距离 = base_distance × zoom。
+## 方向不在这里给 —— 它由俯角决定，见 _get_offset()。
+@export var base_distance: float = 9.434
+
+## 俯角联动范围（度，相对水平面）：
+##   · zoom = min_zoom（推近）→ pitch_near_degrees：视角放平，看得远
+##   · zoom = max_zoom（拉远）→ pitch_far_degrees：相机抬高，接近俯视
+## 两者之间按 zoom 线性插值。
+## 拉远时是"后退 + 抬高"同时发生，于是屏幕里**上下方向的地面纵深变化不大**，
+## 多出来的视野主要落在左右两侧 —— 想"看远"，该做的是推近而不是拉远。
+##
+## 远端为什么从 60° 收到 55°（2026-09-22）：
+##   60° 时地面被压得很扁，前后物体的投影几乎叠在一起，谁挡谁看不清；
+##   贴图侧虽然做了俯角补偿（不再被压扁，见 script/visual/sprite_facing.gd），
+##   但地面本身和程序化网格资源仍按透视走，太陡会让"站在一起的东西"糊成一团。
+##   55° 保住"拉远像看地图"的感觉，同时前后层次还分得开。
+@export var pitch_near_degrees: float = 30.0
+@export var pitch_far_degrees: float = 55.0
 
 ## 固定 FOV。缩放不再动它，避免鱼眼畸变。
 @export var base_fov: float = 50.0
+
+## 注意：Camera3D 挂在 Camera_Target 下，而 Camera_Target 上带着一个 45° 的
+## X 轴旋转 —— 那是遗留值，**每帧的 look_at() 会整体覆盖相机朝向**，它不产生
+## 任何效果。真实俯角只由 base_distance + 上面的俯角范围决定（曾据此把俯角
+## 误判成 45°，做美术资产前务必以这里的参数为准）。
 
 # ---------------- 旋转 ----------------
 
@@ -80,6 +104,11 @@ extends Camera3D
 
 ## 连续旋转的角速度（度/秒）。180 = 按住 1 秒转半圈。
 @export var rotate_hold_speed: float = 200.0
+
+## 松开 Q/E 后，是否把镜头归位到最近的 rotate_step_degrees 档位。
+## 关掉 = 镜头停在任意角度（代价：大小地图会歪成非 45° 的倍数，
+## 因为它们是跟着相机 yaw 转的，见 snap_yaw_to_step()）。
+@export var snap_yaw_on_release: bool = true
 
 ## 档位之间的过渡速度（1/秒）。越小转得越"飘"。
 @export var yaw_smooth: float = 14.0
@@ -162,8 +191,64 @@ func snap_to_target() -> void:
 	_focus_ready = true
 	# 调用点通常不在 _process 里，所以这里直接把机位落好，
 	# 不等下一帧——否则读档那一帧仍会画出"旧机位"的画面。
-	global_position = _focus + (base_offset * _zoom).rotated(Vector3.UP, _yaw)
+	global_position = _focus + _get_offset(_zoom).rotated(Vector3.UP, _yaw)
 	look_at(_focus, Vector3.UP)
+
+
+# ----------------------------------------
+# 档位归位
+#
+# 点按 Q/E 走的是 45° 整数档，但"按住连续旋转"是按 200°/s 逐帧累加的，
+# 松手那一刻 _target_yaw 几乎必然落在两个档位之间（每帧 3° 左右，落点随机）。
+# 镜头自己看不出差别，可大小地图是**跟着相机 yaw 转**的
+# （map_view._update_map_angle 直接取相机的水平前向），于是地图会歪成一个
+# 非 45° 倍数的角度 —— 这就是「大小地图有概率旋转后不是正交角度」的根因。
+# 松手时归到最近档位即可；只改 _target_yaw，_yaw 会平滑转过去（最多 22.5°）。
+# ----------------------------------------
+
+## 把目标角度归位到最近的档位（rotate_step_degrees 的整数倍）。
+## 读档时也会调用：老存档可能是在没有归位的旧版里存的任意角度。
+func snap_yaw_to_step() -> void:
+	var step := deg_to_rad(rotate_step_degrees)
+	if step <= 0.0:
+		return
+	_target_yaw = roundf(_target_yaw / step) * step
+	_wrap_yaw()
+
+
+## 把 _yaw 与 _target_yaw 一起平移回 [0, 2π)，避免长时间游玩后数值无限增长。
+## 两者必须**平移相同的量**，否则镜头会瞬间跳一整圈。
+func _wrap_yaw() -> void:
+	# floorf / roundf 而不是 floor / round：后者是 float+Variant 双签名重载，
+	# 配 `:=` 会把变量推断成 Variant，编辑器直接报错（实测 198 行）。
+	var k := floorf(_target_yaw / TAU)
+	if k != 0.0:
+		_yaw -= k * TAU
+		_target_yaw -= k * TAU
+
+
+# ----------------------------------------
+# 机位：俯角与偏移
+# ----------------------------------------
+
+## 按 zoom 求俯角（度）。把这段映射收敛在一处 —— 机位、调试显示都读它，
+## 免得两处各算一遍、改一半漏一半。
+func get_pitch_degrees(zoom: float) -> float:
+	var span: float = max_zoom - min_zoom
+	if span <= 0.0:
+		return pitch_near_degrees
+	var t: float = clampf((zoom - min_zoom) / span, 0.0, 1.0)
+	# 上限压到 89°：90° 时机位正好在焦点正上方，look_at(_, Vector3.UP) 会退化。
+	return clampf(lerpf(pitch_near_degrees, pitch_far_degrees, t), 0.0, 89.0)
+
+
+## 焦点 → 机位的偏移向量（未经 yaw 旋转）。
+## 长度 = base_distance × zoom；方向由俯角定：水平分量 cos、垂直分量 sin，
+## 于是机位永远落在焦点的"后方上方"，俯角越大越接近正上方。
+## 传入平滑后的 _zoom，俯角就跟着一起平滑，缩放时不会突然跳一个角度。
+func _get_offset(zoom: float) -> Vector3:
+	var pitch: float = deg_to_rad(get_pitch_degrees(zoom))
+	return Vector3(0.0, sin(pitch), -cos(pitch)) * (base_distance * zoom)
 
 
 func _input(event: InputEvent) -> void:
@@ -198,10 +283,12 @@ func _process(delta: float) -> void:
 	_update_focus(delta)
 
 	# ---- 机位 ----
-	var offset := base_offset * _zoom
+	# 偏移由俯角算出：zoom 同时决定"退多远"（base_distance × zoom）
+	# 和"抬多高"（俯角），于是拉远 = 后退 + 抬高，与饥荒一致。
+	var offset := _get_offset(_zoom)
 	global_position = _focus + offset.rotated(Vector3.UP, _yaw)
 
-	# 看向焦点（不是角色）。机位 = 焦点 + 固定偏移，所以视线方向恒定，
+	# 看向焦点（不是角色）。机位 = 焦点 + 偏移，所以视线方向恒定，
 	# 角色上下起伏只平移画面、不改俯角——饥荒的固定视角。
 	look_at(_focus, Vector3.UP)
 
@@ -274,6 +361,11 @@ func _update_rotation(delta: float) -> void:
 		dir = 0
 
 	if dir == 0:
+		# 刚松开 Q/E：走的是"连续旋转"的话，_target_yaw 会停在两个档位之间
+		# （每帧加 200°/s × delta，落点随机）。这时必须归位，否则大小地图
+		# 会歪成一个非 45° 倍数的角度——它们是跟着相机 yaw 转的。
+		if _rotate_dir != 0 and snap_yaw_on_release:
+			snap_yaw_to_step()
 		_rotate_dir = 0
 		_hold_time = 0.0
 		return

@@ -249,6 +249,8 @@ func add_record(resource_id: StringName, position: Vector3, state: int = int(Res
 		"pos": Vector3(position.x, 0.0, position.z),
 		"state": state,
 		"regen_remaining": regen_remaining,
+		# 剩余工作量（树 / 大石头砍到一半走开时保存进度；0 = 满工作量）
+		"work_remaining": 0.0,
 		"entity": null,
 	}
 	_next_instance_id += 1
@@ -283,6 +285,8 @@ func add_record_from_save(data: Dictionary) -> void:
 	if rec.is_empty():
 		return
 	rec["instance_id"] = int(data.get("instance_id", rec["instance_id"]))
+	# 老档没有这个键 → 0（满工作量）
+	rec["work_remaining"] = float(data.get("work_remaining", 0.0))
 
 	# "采集中途存档"这一种档：state 被归一化成 HARVESTED，但那时还没开始计时，
 	# regen_time_remaining = 0。记录层没有"实体创建后再启动"的时机，
@@ -464,8 +468,9 @@ func get_record_data(rec: Dictionary) -> ResourceData:
 # 因此额外在出生点周围环形撒一小簇，确保"一开局就能采集、能拿到木头"。
 #
 # 注意：采集工具强制后（树要斧、大石要镐），起步簇必须保证空手
-# 有产出 —— 草 + 小石块（都 required_tool=NONE），捡出来的石头
-# 够合成"粗制石斧"（石3+草3），再砍树进入正常链路。
+# 有产出 —— 草 + 小石块（都没设工具门槛），捡出来的石头 + 木棍
+# 够合成"石斧"（石3+木棍2），再砍树进入正常链路。
+# （早期的"粗制石斧 / 木斧 / 木镐"三档过渡工具已删除，开局位由石制工具顶替。）
 const STARTER_CLUSTER: Dictionary = {
 	"grass": 6,
 	"pebble": 6,
@@ -553,10 +558,10 @@ func _process(delta: float) -> void:
 # ============================================
 #
 # 规则（2026-09-12 用户约定）：
-#   树必须装备斧头、大石头/矿必须装备镐子；
-#   草和小石块空手可采（required_tool = NONE）。
-#   死锁的解法：小石块空手可捡 → 掉石头 → 粗制石斧（石3+草3，徒手配方）
-#   → 砍树 → 原木 → 木镐 → 大石头。
+#   树必须装备斧头、大石头/铁矿/煤矿必须装备镐子（现在按"工具标签白名单"判定）；
+#   草和小石块空手可采（白名单留空）。
+#   死锁的解法：小石块空手可捡 → 掉石头 + 木棍 → 石斧（石3+木棍2，徒手配方）
+#   → 砍树 → 原木 → 石镐 → 大石头。
 #
 # 提示走本文件的 flash_hint（底部一行字，1.6 秒收起），
 # 与 BuildPlacer 的提示层同名不同节点，互不干扰。
@@ -565,27 +570,31 @@ func _process(delta: float) -> void:
 func is_tool_sufficient_for_data(data: ResourceData) -> bool:
 	if data == null:
 		return false
-	var required := int(data.required_tool)
-	if required == int(ResourceData.HarvestTool.NONE):
+	# 没配白名单 = 不设门槛，空手可采（草、木棍、浆果、小石块）
+	if data.allowed_tool_tags.is_empty():
 		return true
-	return _current_tool() == required
+	var tool_item := _current_tool_item()
+	if tool_item == null:
+		return false
+	return data.is_tool_tag_allowed(tool_item.tags)
 
 ## 玩家当前装备的工具是否满足该资源的采集要求
-## 无 Equipment 节点时按"空手"处理（只有 NONE 资源可通过）
+## 无 Equipment 节点时按"空手"处理（只有没设门槛的资源可通过）
 func is_tool_sufficient(entity: ResourceEntity) -> bool:
 	if entity == null or not is_instance_valid(entity) or entity.resource_data == null:
 		return false
 	return is_tool_sufficient_for_data(entity.resource_data)
 
-## 玩家当前工具类型（无 Equipment 时 = NONE）
-func _current_tool() -> int:
+## 玩家工具槽上那件物品的数据（无 Equipment / 没装工具时返回 null）
+func _current_tool_item() -> ItemData:
 	var root := _get_player_root()
 	if root == null:
-		return int(ResourceData.HarvestTool.NONE)
+		return null
 	var equipment = root.get_node_or_null("Equipment")
-	if equipment == null or not equipment.has_method("get_current_tool"):
-		return int(ResourceData.HarvestTool.NONE)
-	return int(equipment.call("get_current_tool"))
+	if equipment == null or not equipment.has_method("get_tool_item"):
+		return null
+	var tool_item: ItemData = equipment.call("get_tool_item")
+	return tool_item
 
 ## 该资源缺工具时的提示文案
 func get_tool_missing_hint(entity: ResourceEntity) -> String:
@@ -597,8 +606,9 @@ func get_tool_missing_hint(entity: ResourceEntity) -> String:
 func get_tool_missing_hint_for_data(data: ResourceData) -> String:
 	if data == null:
 		return ""
-	var verb := ResourceData.get_harvest_verb(int(data.required_tool))
-	var tool_name := ResourceData.get_required_tool_name(int(data.required_tool))
+	var tag := data.primary_tool_tag()
+	var verb := ResourceData.get_harvest_verb(tag)
+	var tool_name := ResourceData.get_tool_tag_name(tag)
 	return "%s「%s」需要装备%s" % [verb, data.display_name, tool_name]
 
 
@@ -883,6 +893,8 @@ func _materialize(rec: Dictionary) -> ResourceEntity:
 	entity.instance_id = int(rec["instance_id"])
 	# 把记录层的状态/倒计时原样套回实体（对象池的 acquire 只设了大状态）
 	entity.apply_record_state(state, float(rec["regen_remaining"]))
+	# 半棵树的进度也要还回去：记录层是存档的权威来源，实体只是它的临场表现
+	entity.work_remaining = float(rec.get("work_remaining", 0.0))
 
 	_wire_entity_signals(entity)
 	rec["entity"] = entity
@@ -934,6 +946,7 @@ func _sync_record_from_entity(rec: Dictionary, entity: ResourceEntity) -> void:
 		st = int(ResourceState.State.HARVESTED)
 	rec["state"] = st
 	rec["regen_remaining"] = float(d.get("regen_time_remaining", 0.0))
+	rec["work_remaining"] = float(d.get("work_remaining", 0.0))
 
 # ----------------------------------------
 # 已实例化的记录直接复用，否则即时实例化

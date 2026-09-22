@@ -15,6 +15,11 @@
 class_name ResourceVisual
 extends Node3D
 
+# 用 preload 而不用全局类名 SpriteFacing：
+# 全局类名要靠 .godot/global_script_class_cache.cfg，新建脚本若尚未被编辑器
+# 扫描登记，运行时就会报"找不到类"。preload 是编译期常量，不依赖那份缓存。
+const Facing := preload("res://script/visual/sprite_facing.gd")
+
 # ============================================
 # 导出变量
 # 在编辑器中可以拖拽设置这些节点引用
@@ -23,6 +28,14 @@ extends Node3D
 # 3D 精灵节点，用于显示资源图片和动画
 # 在场景中将 AnimatedSprite3D 节点拖入此处
 @export var sprite: AnimatedSprite3D
+
+# 是否让贴图始终正对相机（含俯角补偿）
+# 关掉则沿用场景里写死的朝向，贴图在拉远镜头时会被透视压扁
+@export var face_camera: bool = true
+
+# 俯角补偿比例：1.0 = 完全正对镜头（屏幕高度不随缩放变化），
+# 0.0 = 不补偿（等同旧的 billboard = FIXED_Y）。详见 sprite_facing.gd
+@export_range(0.0, 1.0, 0.05) var billboard_tilt: float = 1.0
 
 # 动画播放器，用于播放复杂动画
 # 可以播放与 SpriteFrames 不同的 AnimationPlayer 动画
@@ -41,6 +54,10 @@ var _current_state: ResourceState.State = ResourceState.State.GROWING
 # 程序化兜底网格列表（无美术贴图时自动生成，保证资源可见）
 var _mesh_instances: Array[MeshInstance3D] = []
 
+# 贴图中心到锚点（实体原点 = 树根脚下的地面）的高度，取自精灵原始 position.y。
+# 每帧的倾斜补偿绕这个锚点转，贴图底边才不会前后滑动、和碰撞体错位。
+var _sprite_pivot: float = 0.0
+
 # ============================================
 # 设置函数
 # ============================================
@@ -54,24 +71,138 @@ var _mesh_instances: Array[MeshInstance3D] = []
 # ----------------------------------------
 func setup(data: ResourceData) -> void:
 	_resource_data = data
-	
-	# 如果设置了精灵和贴图，配置生长状态贴图
-	if sprite and data.growing_texture:
+
+	# 兜底：@export 的节点引用没被解析时（.tscn 的节点头部漏写
+	# node_paths=PackedStringArray("sprite") 就会这样——**静默**拿到 null，
+	# Godot 不报任何错），按场景里的节点名再找一次。
+	#
+	# 2026-09-22 的事故正是如此：tree.tscn 的 Visual 漏了 node_paths，
+	# sprite 永远是 null，于是
+	#   ① has_art 判成 false → 真有 25 帧美术的树上又叠了一层灰色兜底网格
+	#      （表现为树旁边冒出一个白方块）；
+	#   ② 真精灵彻底失去控制（hide_mesh_immediate / _update_sprite_visibility
+	#      都因为 sprite == null 直接 return）→ 采集完树还立在原地。
+	if sprite == null:
+		sprite = _find_sprite_fallback()
+		if sprite != null:
+			DebugConfig.warn_msg(DebugConfig.CAT_RESOURCE,
+				"[视觉] %s 的 sprite 引用未解析（检查 .tscn 是否漏写 node_paths），已按节点名兜底",
+				[data.resource_id if data != null else &"?"])
+
+	# 是否"已经配好真美术"：场景里的 AnimatedSprite3D 自带 SpriteFrames。
+	#
+	# 判据为什么不能用 growing_texture 是否为空？
+	#   树的 tscn/prefab/tree.tscn 把 25 帧动画写在
+	#   art/props/tree_1/tree_frames.tres 里，由帧资源自己描述完整，
+	#   tree_data.tres 的 growing_texture 一直是空的。若沿用旧判据，这棵树会被
+	#   当成"没有美术"，于是在真贴图上面**再叠一套**程序化兜底网格。
+	var has_art: bool = _sprite_has_art()
+
+	# 老路径：没有帧动画时，用 ResourceData 里的单张贴图当第 0 帧
+	if sprite != null and not has_art:
+		if sprite.sprite_frames == null:
+			sprite.sprite_frames = SpriteFrames.new()
 		# sprite_frames 是 AnimatedSprite 的动画帧集合
 		# set_frame_texture 设置某一帧的贴图
-		# 参数1：动画名称
-		# 参数2：帧索引
-		# 参数3：贴图资源
-		sprite.sprite_frames.set_frame_texture(data.growing_animation, 0, data.growing_texture)
-	
-	# 配置已采集状态贴图
-	if sprite and data.harvested_texture:
-		sprite.sprite_frames.set_frame_texture(data.harvested_animation, 0, data.harvested_texture)
-	
-	# 没有精灵/贴图时（当前草/树/石都未配美术资源），
-	# 用程序化 3D 网格兜底，保证资源在世界上可见、可被靠近交互。
-	if not (sprite and data.growing_texture):
+		_set_single_frame(data.growing_animation, data.growing_texture)
+		_set_single_frame(data.harvested_animation, data.harvested_texture)
+
+	# 既没有帧动画、也没有单张贴图时，用程序化 3D 网格兜底，
+	# 保证资源在世界上可见、可被靠近交互。
+	if not has_art and data.growing_texture == null:
 		_build_placeholder_mesh(data)
+
+	# 记录贴图中心高度：倾斜补偿要绕"贴图底边"转（见 _apply_facing），
+	# 所以必须知道中心离锚点多高。场景里给的就是这个值。
+	if sprite != null:
+		_sprite_pivot = sprite.position.y
+
+
+# ============================================
+# 每帧朝向
+# ============================================
+
+# ----------------------------------------
+# 每渲染帧把贴图摆正到"正对相机 + 俯角补偿"
+#
+# 为什么不用引擎内置的 billboard = FIXED_Y：
+#   它只跟相机的水平旋转（yaw），不跟俯角（pitch）。相机拉到 60° 俯角时，
+#   竖直的贴图被透视压缩到只剩 cos60° = 50% 高 —— 同一棵树推近时高、
+#   拉远时矮，看起来像换了一棵。改由这里每帧重算，屏幕高度就不随缩放变化。
+#
+# 只对带真精灵的资源生效（目前是树）；程序化兜底网格是 3D 体块，
+# 本身有体积，不需要也不该跟着相机转。
+# ----------------------------------------
+func _process(_delta: float) -> void:
+	if not face_camera or sprite == null or not is_instance_valid(sprite):
+		return
+	# 已经藏起来的（采集完的树、被流式卸载的）不用算
+	if not sprite.visible:
+		return
+	_apply_facing()
+
+
+func _apply_facing() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	# 锚点 = 实体原点的世界坐标。资源生成时脚下就是地面，
+	# 绕这个点倾斜，贴图底边始终贴地、不会和碰撞体错位。
+	var root: Node = get_parent()
+	var ground: Vector3 = global_position
+	if root is Node3D:
+		ground = (root as Node3D).global_position
+	sprite.global_transform = Facing.facing_transform(
+		cam, ground, _sprite_pivot, billboard_tilt)
+
+
+# ----------------------------------------
+# 精灵是否自带帧动画（= 已配真美术）
+# ----------------------------------------
+func _sprite_has_art() -> bool:
+	if sprite == null or sprite.sprite_frames == null:
+		return false
+	return not sprite.sprite_frames.get_animation_names().is_empty()
+
+
+# ----------------------------------------
+# 按节点名兜底查找精灵
+#
+# 场景里两种摆法都有先例：精灵是 Visual 的子节点（旧 grass 场景），
+# 或与 Visual 平级、挂在实体根下（tree.tscn）。两种都试一次。
+# ----------------------------------------
+func _find_sprite_fallback() -> AnimatedSprite3D:
+	var own: AnimatedSprite3D = get_node_or_null("Sprite") as AnimatedSprite3D
+	if own != null:
+		return own
+	var root: Node = get_parent()
+	if root == null:
+		return null
+	var by_name: AnimatedSprite3D = root.get_node_or_null("Sprite") as AnimatedSprite3D
+	if by_name != null:
+		return by_name
+	# 名字对不上时按类型兜底：实体下第一个 AnimatedSprite3D 就是它的外观
+	for child in root.get_children():
+		var spr: AnimatedSprite3D = child as AnimatedSprite3D
+		if spr != null:
+			return spr
+	return null
+
+
+# ----------------------------------------
+# 把单张贴图写进某个动画的第 0 帧
+# 动画不存在则先建一个空动画再插帧
+# （add_animation 建出来的是 0 帧的空动画，直接 set_frame_texture(anim, 0) 会越界报错）
+# ----------------------------------------
+func _set_single_frame(anim_name: String, tex: Texture2D) -> void:
+	if tex == null or anim_name == "" or sprite == null or sprite.sprite_frames == null:
+		return
+	if not sprite.sprite_frames.has_animation(anim_name):
+		sprite.sprite_frames.add_animation(anim_name)
+	if sprite.sprite_frames.get_frame_count(anim_name) == 0:
+		sprite.sprite_frames.add_frame(anim_name, tex)
+	else:
+		sprite.sprite_frames.set_frame_texture(anim_name, 0, tex)
 
 # ============================================
 # 公共方法
@@ -112,6 +243,49 @@ func set_visual_state(state: ResourceState.State) -> void:
 			if is_instance_valid(mi):
 				mi.visible = show_mesh
 
+	# 真美术精灵：可见性同样按状态收紧
+	_update_sprite_visibility(state)
+
+
+# ----------------------------------------
+# 按状态决定精灵是否可见
+#
+# 为什么要单独管：
+#   树没有"树桩"帧，被砍完只能整棵消失。若不管，精灵会停在 chop 的最后一帧上，
+#   于是"东西已经进背包了，树还立在原地"——这正是 hide_mesh_immediate 当初要解决的问题，
+#   只不过以前它只管程序化网格，管不到真精灵。
+#
+# GROWING / REGENERATING / TRANSITIONING → 可见
+# HARVESTED → 只有配了"已采集"动画（如树桩）才可见，否则整棵藏掉
+# ----------------------------------------
+func _update_sprite_visibility(state: ResourceState.State) -> void:
+	if sprite == null:
+		return
+	if state != ResourceState.State.HARVESTED:
+		sprite.visible = true
+		return
+	sprite.visible = _has_harvested_art()
+
+
+# ----------------------------------------
+# 是否配了"已采集"美术（如树桩）
+# 没有 = 采集完应当整棵消失
+# ----------------------------------------
+func _has_harvested_art() -> bool:
+	if _resource_data == null:
+		return false
+	return _has_animation(_resource_data.harvested_animation)
+
+
+# ----------------------------------------
+# 精灵帧里是否有这个动画（自带空值守卫）
+# ----------------------------------------
+func _has_animation(anim_name: String) -> bool:
+	if anim_name == "" or sprite == null or sprite.sprite_frames == null:
+		return false
+	return sprite.sprite_frames.has_animation(anim_name)
+
+
 # ----------------------------------------
 # 立即隐藏网格函数
 # 采集到物品的那一帧调用，让"物品进背包"和"资源从画面上消失"同时发生。
@@ -129,6 +303,11 @@ func hide_mesh_immediate() -> void:
 	for mi in _mesh_instances:
 		if is_instance_valid(mi):
 			mi.visible = false
+	# 真美术精灵一并收起。
+	# 配了"已采集"帧（树桩）的除外：那种情况要留在场上，等 transition 走完切到 HARVESTED
+	# 再显示树桩；此刻就藏会让它先消失一秒再冒出来，反而难看。
+	if sprite != null and not _has_harvested_art():
+		sprite.visible = false
 
 # ----------------------------------------
 # 立即设置视觉状态函数
@@ -146,11 +325,25 @@ func set_visual_state_immediate(state: ResourceState.State) -> void:
 		ResourceState.State.HARVESTED:
 			_set_frame_immediate(_resource_data.harvested_animation if _resource_data else "harvested")
 
+	# 读档恢复到"已采集"时同样要收紧精灵可见性，否则读档回来的树桩位置上
+	# 会站着（或消失错）一棵树。
+	_update_sprite_visibility(state)
+
 # ----------------------------------------
 # 播放采集动画函数
 # 采集时调用的特殊动画
 # ----------------------------------------
 func play_harvest_animation() -> void:
+	# 优先播精灵帧里的"采集/砍伐"动画（如树的 chop：25 帧连播 ≈ 0.83s）。
+	# 树的每次作业间隔是 1 秒，这一遍 0.83 秒的晃动正好填满两次挥砍之间——
+	# 砍 6 下就是晃 6 遍，不会有"动画早停了但人还在挥"的空窗。
+	# 这条路走通就不再往下找 AnimationPlayer。
+	if _resource_data != null and _has_animation(_resource_data.harvest_animation):
+		sprite.visible = true
+		# 非循环动画，播完停在最后一帧；随后的 hide_mesh_immediate 会把它收掉
+		sprite.play(_resource_data.harvest_animation)
+		return
+
 	# 检查是否有动画播放器
 	if animation_player:
 		# has_animation 检查是否有指定名称的动画
@@ -167,9 +360,8 @@ func play_harvest_animation() -> void:
 # ----------------------------------------
 func _play_animation(anim_name: String) -> void:
 	# 检查精灵和动画是否存在
-	if sprite and sprite.sprite_frames:
-		if sprite.sprite_frames.has_animation(anim_name):
-			sprite.play(anim_name)
+	if _has_animation(anim_name):
+		sprite.play(anim_name)
 
 # ----------------------------------------
 # 播放再生动画函数
@@ -191,10 +383,9 @@ func _play_transition_animation() -> void:
 # 用于快速恢复状态
 # ----------------------------------------
 func _set_frame_immediate(anim_name: String) -> void:
-	if sprite and sprite.sprite_frames:
-		if sprite.sprite_frames.has_animation(anim_name):
-			sprite.animation = anim_name  # 设置当前动画名称
-			sprite.frame = 0              # 设置为第一帧（停止在当前帧）
+	if _has_animation(anim_name):
+		sprite.animation = anim_name  # 设置当前动画名称
+		sprite.frame = 0              # 设置为第一帧（停止在当前帧）
 
 # ============================================
 # 程序化兜底网格（无贴图时调用）
@@ -203,11 +394,10 @@ func _set_frame_immediate(anim_name: String) -> void:
 func _build_placeholder_mesh(data: ResourceData) -> void:
 	if not _mesh_instances.is_empty():
 		return
+	# 注意：没有 TREE 分支。树有真美术（tscn/prefab/tree.tscn 的 25 帧动画），
+	# 永远不会走到这里；万一帧资源丢失，落 `_` 默认灰盒也比叠旧模型强。
 	var rt: int = data.resource_type if data else 0
 	match rt:
-		ResourceData.ResourceType.TREE:
-			_add_mesh(_make_cylinder(0.22, 0.28, 1.6), Color(0.45, 0.30, 0.18), Vector3(0, 0.8, 0))
-			_add_mesh(_make_cone(1.1, 1.8), Color(0.20, 0.55, 0.25), Vector3(0, 2.0, 0))
 		ResourceData.ResourceType.STONE:
 			_add_mesh(_make_box(0.9, 0.7, 0.9), Color(0.62, 0.62, 0.66), Vector3(0, 0.35, 0))
 		ResourceData.ResourceType.PEBBLE:
@@ -264,16 +454,3 @@ func _make_sphere(r: float) -> Mesh:
 	s.radius = r
 	s.height = r * 2.0
 	return s
-
-func _make_cylinder(top: float, bottom: float, h: float) -> Mesh:
-	var c := CylinderMesh.new()
-	c.top_radius = top
-	c.bottom_radius = bottom
-	c.height = h
-	return c
-
-func _make_cone(r: float, h: float) -> Mesh:
-	# 用 PrismMesh（棱锥）代替 ConeMesh，避免某些编辑器版本/缓存中 ConeMesh 类名未解析
-	var p := PrismMesh.new()
-	p.size = Vector3(r * 2.0, h, r * 2.0)
-	return p

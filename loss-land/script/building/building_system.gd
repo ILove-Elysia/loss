@@ -18,7 +18,7 @@
 # 三个建筑的实际效果（大纲 3.5.2）：
 #   工作台   - 放置后【永久】解锁需要工作台的高级配方
 #   熔炉     - 放置后【永久】解锁铁锭 / 铁剑 / 铁镐配方（station = furnace），
-#              同时在其半径内提供热源，把体温拉向 heat_target
+#              同时在半径内提供热源（heat_value_rate，见下）
 #   储物箱   - 放置后在其半径内可打开，提供 storage 格额外存储
 #
 # 注意「永久解锁」是有意的选择：若要求玩家必须站在工作台旁才能合成，
@@ -53,8 +53,7 @@ static func _ensure_built() -> void:
 		"name": "工作台",
 		"station": &"workbench",
 		"storage": 0,
-		"heat_target": 0.0,
-		"heat_rate": 0.0,
+		"heat_value_rate": 0.0,
 		"heat_radius": 0.0,
 		"color": [0.62, 0.45, 0.24],
 		"size": [1.6, 1.0],
@@ -65,12 +64,11 @@ static func _ensure_built() -> void:
 		"name": "熔炉",
 		"station": &"furnace",
 		"storage": 0,
-		# 大纲 3.2.3 写的是"熔炉附近 +5/分钟"。但雪地区降温是 -15/分钟，
-		# 只 +5 完全是净流失，熔炉等于没用。这里改成"趋向 35 度"的模式：
-		# 熔炉把体温拉向 heat_target，速率 heat_rate（度/秒），
-		# 于是雪地里站在熔炉旁体温稳定在 ~34 度，保暖才有意义。
-		"heat_target": 35.0,
-		"heat_rate": 20.0 / 60.0,
+		# 热源规则（大纲 3.2.3）：熔炉把**温度值**往上顶，速率 heat_value_rate
+		# （温度值/秒）。**只要人在 5 米内就持续加热，不封顶在常温**（用户决策
+		# 2026-09-16）—— 温度值最高涨到 1000，所以火边能救命、待久了也会过热，
+		# 得自己挪开（与饥荒的火堆一致）。
+		"heat_value_rate": 20.0,
 		"heat_radius": 5.0,
 		"color": [0.38, 0.36, 0.34],
 		"size": [1.2, 1.4],
@@ -81,8 +79,7 @@ static func _ensure_built() -> void:
 		"name": "储物箱",
 		"station": &"",
 		"storage": 20,
-		"heat_target": 0.0,
-		"heat_rate": 0.0,
+		"heat_value_rate": 0.0,
 		"heat_radius": 0.0,
 		"color": [0.55, 0.40, 0.22],
 		"size": [1.1, 0.9],
