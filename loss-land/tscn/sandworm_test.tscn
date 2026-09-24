@@ -1,0 +1,85 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="PackedScene" uid="uid://drkoq7x6qkejo" path="res://tscn/player.tscn" id="1_player"]
+[ext_resource type="Script" path="res://test/sandworm_arena.gd" id="2_arena"]
+[ext_resource type="Script" path="res://test/arena_flat_map_gen.gd" id="3_mapgen"]
+[ext_resource type="PackedScene" path="res://tscn/prefab/boss/sandworm.tscn" id="4_boss"]
+
+[sub_resource type="Environment" id="Environment_arena"]
+ambient_light_source = 2
+ambient_light_color = Color(0.83, 0.83, 0.83, 1)
+ambient_light_energy = 9.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_sand"]
+albedo_color = Color(0.78, 0.68, 0.46, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+size = Vector3(90, 1, 90)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
+size = Vector3(90, 1, 90)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_nest"]
+top_radius = 1.4
+bottom_radius = 2.4
+height = 0.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_nest"]
+albedo_color = Color(0.35, 0.28, 0.2, 1)
+
+[node name="SandwormTest" type="Node3D"]
+script = ExtResource("2_arena")
+boss_scene = ExtResource("4_boss")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_arena")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, 35, 0)
+light_energy = 1.2
+
+[node name="Ground" type="StaticBody3D" parent="."]
+collision_layer = 2
+collision_mask = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Ground"]
+position = Vector3(0, -0.5, 0)
+mesh = SubResource("BoxMesh_ground")
+material_override = SubResource("StandardMaterial3D_sand")
+
+[node name="Shape" type="CollisionShape3D" parent="Ground"]
+position = Vector3(0, -0.5, 0)
+shape = SubResource("BoxShape3D_ground")
+
+[node name="Nest" type="Node3D" parent="."]
+
+[node name="Spawn" type="Marker3D" parent="Nest"]
+
+[node name="NestMound" type="MeshInstance3D" parent="Nest"]
+position = Vector3(0, 0.4, 0)
+mesh = SubResource("CylinderMesh_nest")
+material_override = SubResource("StandardMaterial3D_nest")
+
+[node name="FlatMapStub" type="Node" parent="."]
+script = ExtResource("3_mapgen")
+
+[node name="Player" parent="." instance=ExtResource("1_player")]
+position = Vector3(0, 1.5, 18)
+
+[node name="DebugLayer" type="CanvasLayer" parent="."]
+
+[node name="DebugPanel" type="ColorRect" parent="DebugLayer"]
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 620.0
+offset_bottom = 214.0
+color = Color(0, 0, 0, 0.55)
+
+[node name="DebugText" type="Label" parent="DebugLayer/DebugPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 6.0
+offset_right = -10.0
+offset_bottom = -6.0
+theme_override_font_sizes/font_size = 14

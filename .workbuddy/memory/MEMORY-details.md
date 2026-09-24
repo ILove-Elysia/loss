@@ -61,6 +61,7 @@
 
 - 相机 `base_fov=50`；机位＝`_focus + Vector3(0,sin(俯角),-cos(俯角))*(9.434*zoom)` 后 `look_at`；俯角 30°(zoom0.6)~55°(1.8)，默认 1.0≈38°。
 - **精灵局部 +X 的朝向**：`SpriteFacing` 的 +X == 相机右方向（与引擎 billboard 同侧）；旧的 `look_at(相机方向)` 的 +X == −相机右方向（镜像）。换朝向系统时这两者不能混。
+- **`flip_h` 符号表（换朝向系统必查，2026-09-22 踩过）**：语义取决于该实体节点自带的镜像次数，**不同实体可能相反、不能互抄**。玩家 `player.tscn` 的 BaseBody 烘了 `scale(-2.6434,…)`（绕 Z 转 180°）+ `flip_v=true`，两者抵消后**净剩一次水平镜像** ⇒ **`spr.flip_h = not facing_left`**（true=屏幕上朝右）。史莱姆的 Sprite 是单位变换、无内置镜像 ⇒ **`sprite.flip_h = _facing_left`**（true=朝左），且判据必须用**相机右方向**（`cam.global_basis.x`）而非世界 X，否则 Q/E 转镜头 90° 后左右就反。`test/sprite_facing_check.py` 第 3 项核手性、第 4 项核这两个符号。
 - **Sprite3D 实查**：`shaded` 默认 **false** ⇒ 不吃光照。`billboard`：0=关（**本项目一律 0**，朝向交给 SpriteFacing）、2=FIXED_Y（只跟 yaw、高俯角下被压扁 cos 值）、1=ENABLED（随俯角倾倒）。`alpha_cut`：**2 = OPAQUE_PREPASS（边缘软 + 排序正确）**、0 混合（排序问题）、1 DISCARD（边缘硬，未开 AA）。`render_priority` 仅 `alpha_cut=0` 有效。**精灵是双面渲染的平面**，屏幕上左右只看局部 +X 落在哪一侧。
 
 ## 攻击 / 伤害 / 死亡
@@ -87,3 +88,26 @@
 - 碰撞层只有两层有名字：layer_1＝玩家、layer_2＝地面/障碍；玩家与史莱姆 `collision_mask=3`。**障碍物一律 layer2 + mask0**（建筑、树干同约定）；`ResourceSpawner.obstacle_layers=[4]`（层 3）、水体在**层 8**。
 - 玩家碰撞体**仅 1.0 m 高**（h=1.0 / r=0.33）但精灵 1.48 m ⇒ 平行地面的投射物/射线必须飞 y ≤ 1.2。地形＝单个 StaticBody3D 挂多段薄盒（厚 1.0、中心 −0.5）⇒ 岛面恒 y=0。
 - 鼠标点地＝相机射线与"玩家脚下高度水平面"**解析求交**（`_ground_point_under_mouse`），**不走物理射线** ⇒ 加碰撞体不影响点击寻路。
+
+## Boss / 沙虫（2026-09-24 实装骨架，未上美术）
+
+> 规格＝`loss-land/主线设计规格.md`（§3 为已实装清单）；结构说明＝`项目结构说明.md` §4.9；回归＝`test/boss_state_test.gd`（46 断言）。
+
+- 类（均 `class_name`，已补进 `.godot/global_script_class_cache.cfg`）：`script/ai/enemy/boss/boss_state.gd`（`BossState`，9 态枚举 RefCounted）、`boss_attack.gd`（`BossAttack`，Resource，`BossAttack.make(dict)`）、`boss_base.gd`（`BossBase extends CharacterBody3D`）、`sandworm.gd`（`Sandworm extends BossBase`）；`script/world/world_state.gd`（`WorldState`，纯静态 flag）。
+- **必须走独立 `"boss"` 组，绝不能进 `"enemy"` 组**：`map_generator_3d._place_enemies()` 会把所有 `"enemy"` 组节点搬去丛林；且 `save_manager`/`world_streamer` 对 enemy 的语义是"不在档＝已击杀"，对 Boss 恰好相反。
+- 状态枚举：`DORMANT/EMERGING/CHASE/TELEGRAPH/STRIKE/RECOVER/RETREAT/FALLEN/GONE`——**没有 `dead`，终态是 `GONE`**；`SAVE_IDS`/`LABELS` 只允许**末尾追加**（枚举存数字）。`can_be_hurt` 只在 CHASE/TELEGRAPH/STRIKE/RECOVER 为真。
+- **阶段切换是隐式闩锁**：没有 `_phase` 字段，`_current_table()` 只在决策点调用 ⇒ 攻击中途不会换表。规则＝按优先级取第一个「`cooldown_left==0` 且玩家在 `[min_range,max_range]`」的技能；**一个都没有 → 回 CHASE**（没有 idle/空放）。
+- 距离一律取 `player/Physics`（`CharacterBody3D`），**不读 `player` 根节点**（见主文件铁律四）。`take_damage` 首行 `_untouchable`/`can_be_hurt` 守卫 ⇒ 防同帧多段伤害穿透保底的 1 HP（玩家 `intersect_shape(...,10)` 一击可命中多个碰撞体）。
+- 保底 1 HP → `_enter_fallen()`（一次性，写 `WorldState` 巢穴塌陷 flag）→ `_process_going_home()` 到底后转 `GONE`；`RETREAT` 与 `FALLEN` **共用** `_process_going_home()`，区别是 RETREAT 可重复、不写世界状态。玩家死亡 → `_on_player_died` → RETREAT 回家**回满血**再 DORMANT。
+- `RETREAT`/`FALLEN` 回家途中「太远（`leash_radius` 超时）或玩家死」→ 回家；`trigger_radius`+`trigger_dwell` 决定唤醒。
+- **测试场地**：`tscn/sandworm_test.tscn`（根脚本 `test/sandworm_arena.gd`）＝平地 90×90 + player + 巢穴 + 调试面板；场地圆环在**运行时按 Boss 的 `@export` 半径生成**（所以改数值圆环会跟着变）。必须带 `test/arena_flat_map_gen.gd`（`add_to_group("map_gen")` 的桩，因为 `physics.gd`/`vitals.gd` 要查地形组）。**只能用 F6 独立窗口跑，F5 内嵌运行不可用**。
+- 按键：T 传送到巢边 / H 传送到远处 / K 杀玩家 / W `debug_wake()` / 1→60% 血 / 2→40% 血 / 9→1 HP / R 重置（`WorldState.reset()` + 复活）。查询接口：`get_state/get_health/current_phase/current_attack_id/debug_line`。
+- `test/mock_boss_target.gd`（`signal died`、真会死）与旧的 `mock_player_body.gd`（"挨打但不死"）**语义不同，别混用**。
+- `BossBase._face(dir)` 目前只转占位 `Visual` 的 yaw——**上真美术（SpriteFacing）时必须删掉它**，否则会和 `sprite_facing.gd` 抢朝向。
+- 待办（见 `待办.md` 与规格）：存档 `world.bosses`/`world.flags` 段（别碰现有 `_collect_enemies`）、新游戏/回主菜单时 `WorldState.reset()`、巢穴实体（读 flag 切 完好/坍塌/可进入）、沙虫真美术与沙地战场；三个待拍板＝阶段 2 表是"3+1 新"还是"4 全换"、是否要"钻地无敌"阶段、`GONE` 后能否再挑战。全部数值（trigger_radius/leash/chase_speed/各技能 range 与时长）均为 `@export` 建议值，**未经用户确认**。
+
+## 文件同步清单（批量改名 / 删除 / 移动 .gd 与物品时）
+
+- **删一件物品同步 5 处**：① `script/items/data/<id>_item.tres`；② `item_registry.tres`（`ext_resource` 行 + `items` 数组条目）；③ `art/icons/<id>.png` + `.import`（**移到 `E:\GameMake\loss\trash_*\`，别硬删**）；④ 测试夹具里的 `&"<id>"`；⑤ `项目结构说明.md` 物品表。删完 `check_data_refs.py` 会报物品数变化，可当校验。
+- **移动一个 .gd 同步 5 处**：① 同名 `.gd.uid`（一起移）；② 文件首行注释里的路径；③ 引用它的 `.tscn` 的 `ext_resource` 路径；④ `test/*.gd` 里的 `load()` 路径；⑤ `.godot/global_script_class_cache.cfg`。`.godot/editor/*` 里留的旧路径**别改**（编辑器自己会更新）。
+- **新增 `class_name`**：补 `.godot/global_script_class_cache.cfg`（`gd_static_lint.py` 第 4 项会查），或在使用处写 `const X := preload("res://…")` 直接绕开缓存（编辑器开着时缓存可能未重扫，这样最稳）。
