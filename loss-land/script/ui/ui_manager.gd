@@ -43,10 +43,19 @@ const GRAPHICS_PANEL := "graphics"
 const STORAGE_PANEL := "storage"
 const BIGMAP_PANEL := "bigmap"
 
-## 「窗口类」面板：同一时刻只允许开一个。
-## 背包/合成/装备/储物箱都是"一次看一个"的信息面板，叠在一起会互相遮挡、
-## 点击目标也会混——用户 2026-09-12 反馈：开着一个再按另一个的快捷键会同时冒出多个。
-const WINDOW_PANELS := [INVENTORY_PANEL, CRAFTING_PANEL, EQUIPMENT_PANEL, STORAGE_PANEL]
+## 「信息类」面板：**可以同时打开**（2026-09-24 用户需求改版）。
+##
+## 它们各自占九宫格里的固定区域，互不重叠，所以不需要互斥：
+##   背包   x 10..422,  y 10..192   （左列上）
+##   箱子   x 10..422,  y 200..362  （左列中）
+##   制作栏 x 10..422,  y 370..626  （左列下）
+##   装备栏 x 850..1270,y 370..710  （右列下；**anchor 全 1.0 贴视口右下角**）
+## 中列（x 510..786）只留 HUD 的短提示，底部 y 634..710 留给快捷栏——
+## 所以左列三块都止步于 y=626；**装备栏在右列、与快捷栏（x 148..648）横向不相交，才能用到 710**。
+##
+## ⚠ 历史：这四块以前是"同刻只开一个"（WINDOW_PANELS），叠在一起会互相遮挡、
+##   点击目标也会混。改成九宫格后每个都有自己的地盘，遮挡问题从根上没了。
+const LAYOUT_PANELS := [INVENTORY_PANEL, STORAGE_PANEL, CRAFTING_PANEL, EQUIPMENT_PANEL]
 
 ## 「全屏覆盖类」面板：打开时顺手收掉所有窗口类面板。
 ## 它们是铺满屏幕的覆盖层（暂停菜单/设置/调试/大地图），底下留着背包没意义，
@@ -238,14 +247,13 @@ func open_panel_impl(name: String) -> Control:
 	if _stack.has(name):
 		return panel
 
-	# 互斥：窗口类面板只能开一个（开新的先收起同组的旧的）；
-	# 全屏覆盖类面板打开时，把窗口类面板统统收掉。
+	# 互斥规则（2026-09-24 起只剩一条）：
+	#   全屏覆盖类（暂停/设置/调试/大地图）打开时，把四块信息面板统统收掉。
+	#   信息类之间**不再互斥**——它们各有九宫格里自己的区域，同开不遮挡。
 	# 这里只改可见性与栈，**不**调 _update_pause——统一留到最后算一次，
 	# 否则中途 paused 会翻转两次（先关旧后开新），白白甩出无用的信号。
 	if FULLSCREEN_PANELS.has(name):
-		_close_group(WINDOW_PANELS, "")
-	elif WINDOW_PANELS.has(name):
-		_close_group(WINDOW_PANELS, name)
+		_close_group(LAYOUT_PANELS, "")
 
 	_stack.append(name)
 	panel.visible = true
@@ -289,6 +297,7 @@ func close_panel_impl(name: String) -> void:
 	var panel := _instances.get(name) as Control
 	if panel != null:
 		panel.visible = false
+
 	_update_pause()
 	panel_closed.emit(name)
 

@@ -1,3 +1,7 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# 从 Git Bash 跑 `godot --headless` 时（shell 里没有 APPDATA），
+# Godot 会把 user:// 落到项目内的这个相对路径，属于运行时日志，不入库。
+/Godot/

@@ -3,11 +3,15 @@
 # 储物箱界面 - 大纲 3.5.2「储物箱：额外20格存储空间」
 #
 # 与背包 UI 保持一致的四个约定（照抄 inventory_ui.gd，不另起炉灶）：
-#   1. 面板用「显式 anchor + 对称 offset」定位，不用 set_anchors_preset
+#   1. 面板用「显式 anchor + 绝对 offset」定位，不用 set_anchors_preset
 #      —— 运行时 new() 出来的控件在 _ready 里调 set_anchors_preset 会算成 0×0
-#   2. UI 层绝不直接改数据：拖放只发 item_dropped，由本类转调 Inventory.move_item
+#   2. UI 层绝不直接改数据：拖放只发 item_dropped，由本类转调 Inventory.transfer_between
 #   3. 每次显示时刷新（on_shown 钩子），因为 UIManager 只改 visible
 #   4. 动态重建的按钮/槽位要清一次键盘焦点，否则按空格会被当成再点一次
+#
+# 位置（2026-09-24 九宫格）：左列中间那块 —— x 10..422、y 200..362。
+#   正上方是背包、正下方是制作栏，三块同时开也不重叠。
+#   箱子和背包都是 10 列 × 2 行、36px 格子，左右对齐，拖拽落点直观。
 #
 # 为什么右键是"取回到背包"而不是"使用"：
 #   箱子里放的是资源/材料，使用场景几乎一定是"我要把它拿出来用/拿去合成"。
@@ -20,8 +24,14 @@ extends Control
 
 signal closed()
 
-## 每行格数
-@export var columns: int = 9
+## 面板区域（1280×720 九宫格）：左列中间
+const RECT_STORAGE := Rect2(10, 200, 412, 162)
+
+## 每行格数（10 列 × 2 行 = 20 格）
+@export var columns: int = 10
+
+## 槽位边长（px）；与背包一致
+@export var slot_size: int = 36
 
 ## 当前打开的箱子背包（Building 的 storage 子节点）
 var storage: Inventory = null
@@ -53,18 +63,22 @@ func _ready() -> void:
 
 
 func _setup_ui() -> void:
-	# 居中定位：显式 anchor + 对称 offset。
+	# 位置与尺寸：九宫格的**左列中间**（正上方背包、正下方制作栏）。
+	#
+	# 2026-09-24 起四块信息面板可以同时打开，各自占一块固定区域，所以箱子不再需要
+	# "把背包挤到一边"的让位逻辑——两块的矩形本来就是分开的（见 RECT_STORAGE）。
+	#
 	# 根节点【不要】调 set_anchors_preset——运行时 new() 出来的控件在 _ready 里
 	# 调它会按当前尺寸（0×0）算 offset，面板会塌成一个点。
 	# 这一条在 inventory_ui / crafting_ui 上都踩过，别再犯。
-	anchor_left = 0.5
-	anchor_top = 0.5
-	anchor_right = 0.5
-	anchor_bottom = 0.5
-	offset_left = -320
-	offset_top = -190
-	offset_right = 320
-	offset_bottom = 190
+	anchor_left = 0.0
+	anchor_top = 0.0
+	anchor_right = 0.0
+	anchor_bottom = 0.0
+	offset_left = RECT_STORAGE.position.x
+	offset_top = RECT_STORAGE.position.y
+	offset_right = RECT_STORAGE.end.x
+	offset_bottom = RECT_STORAGE.end.y
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -95,15 +109,18 @@ func _setup_ui() -> void:
 	# ---- 箱子格位 ----
 	_grid = GridContainer.new()
 	_grid.columns = columns
-	_grid.add_theme_constant_override("h_separation", 6)
-	_grid.add_theme_constant_override("v_separation", 6)
+	# 间距 4 与背包一致：两个面板并排时格子左右对齐，拖拽落点更直观
+	_grid.add_theme_constant_override("h_separation", 4)
+	_grid.add_theme_constant_override("v_separation", 4)
 	vbox.add_child(_grid)
 
 	vbox.add_child(HSeparator.new())
 
 	var hint := Label.new()
-	hint.text = "拖拽整理/存取 · Shift+左键全取 · Ctrl+左键取半 · 右键取1"
-	hint.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	hint.text = "拖拽存取 · Shift+左键取回 · Ctrl+左键取半 · 右键取 1"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", Color(0.75, 0.78, 0.82))
 	vbox.add_child(hint)
 
 
@@ -181,7 +198,7 @@ func _rebuild_slots() -> void:
 	for i in range(storage.max_slots):
 		var slot_ui := ItemSlotUI.new()
 		slot_ui.slot_index = i
-		slot_ui.custom_minimum_size = Vector2(64, 64)
+		slot_ui.custom_minimum_size = Vector2(slot_size, slot_size)
 		# 拖拽数据带上来源标识，背包 UI 靠它区分箱子拖来的物品
 		slot_ui.source_id = "storage"
 		slot_ui.clicked.connect(_on_slot_clicked)
@@ -261,23 +278,28 @@ func _transfer_to_player(slot_index: int, count: int) -> void:
 	refresh()
 
 
-## 背包拖进箱子：整堆/合并/交换，数据统一走 Inventory.move_between
-func _on_cross_dropped(source: String, from_slot: int, to_slot: int) -> void:
+## 背包拖进箱子：整堆/合并/交换，数据统一走 Inventory.transfer_between
+## count < 0 = 整堆（普通拖拽）；> 0 = 只搬这么多个（拖拽时按住 Ctrl，只存 1 个过去）
+func _on_cross_dropped(source: String, from_slot: int, to_slot: int, count: int) -> void:
 	if source != "player":
 		return
 	if player_inventory == null:
 		_find_player_inventory()
 	if player_inventory == null or storage == null:
 		return
-	Inventory.move_between(player_inventory, from_slot, storage, to_slot)
+	Inventory.transfer_between(player_inventory, from_slot, storage, to_slot, count)
 	refresh()
 
 
-## 箱内拖放：只发信号，数据改动交给 Inventory.move_item
-func _on_slot_item_dropped(from_slot: int, to_slot: int) -> void:
+## 箱内拖放：只发信号，数据改动交给 Inventory
+## count > 0 时（Ctrl 拖拽）只搬这么多个，走 transfer_between 的拆堆路径
+func _on_slot_item_dropped(from_slot: int, to_slot: int, count: int) -> void:
 	if storage == null or from_slot == to_slot:
 		return
-	storage.move_item(from_slot, to_slot)
+	if count > 0:
+		Inventory.transfer_between(storage, from_slot, storage, to_slot, count)
+	else:
+		storage.move_item(from_slot, to_slot)
 	refresh()
 
 

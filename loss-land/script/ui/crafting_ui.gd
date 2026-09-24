@@ -9,11 +9,15 @@
 #   右侧：选中配方的详情（图标、名称、说明、材料清单 拥有/需求）+ 合成按钮
 #
 # 与背包 UI 保持一致的三个约定：
-#   1. 面板用「显式 anchor + 对称 offset」定位，不用 set_anchors_preset
+#   1. 面板用「显式 anchor + 绝对 offset」定位，不用 set_anchors_preset
 #      —— 运行时 new() 出来的控件在 _ready 里调 set_anchors_preset 会算成 0×0
 #      （这个坑在暂停/设置面板上已经踩过一次）
 #   2. 背包按 "player" 组查找，不依赖绝对路径
 #   3. z_index 抬高 + 根节点 MOUSE_FILTER_STOP，避免被 HUD 盖住、点击穿透到 3D
+#
+# 位置（2026-09-24 九宫格，同日三次改版：物品格缩到 36 后面板收窄）：
+#   左列底部 x 10..422、y 370..626 —— 高 256，
+#   所以配方列表与详情各自可滚动，合成按钮/状态行也挪进右侧详情列（跟着选中的配方走）。
 #
 # 刷新时机：
 #   背包信号（增删改清）+ 面板每次变为可见时（由 UIManager 设 visible 触发）。
@@ -23,6 +27,9 @@ class_name CraftingUI
 extends Control
 
 signal closed()
+
+## 面板区域（1280×720 九宫格）：左列底部
+const RECT_CRAFTING := Rect2(10, 370, 412, 256)
 
 # ============================================
 # 变量
@@ -127,15 +134,16 @@ func refresh() -> void:
 # ============================================
 
 func _setup_ui() -> void:
-	# 居中面板：显式锚点 + 对称偏移（不用 set_anchors_preset）
-	anchor_left = 0.5
-	anchor_top = 0.5
-	anchor_right = 0.5
-	anchor_bottom = 0.5
-	offset_left = -330
-	offset_top = -230
-	offset_right = 330
-	offset_bottom = 230
+	# 九宫格的**左列底部**（正上方是箱子、再上是背包）。
+	# 显式 anchor + 绝对 offset；不用 set_anchors_preset（运行时 new() 会算成 0×0）。
+	anchor_left = 0.0
+	anchor_top = 0.0
+	anchor_right = 0.0
+	anchor_bottom = 0.0
+	offset_left = RECT_CRAFTING.position.x
+	offset_top = RECT_CRAFTING.position.y
+	offset_right = RECT_CRAFTING.end.x
+	offset_bottom = RECT_CRAFTING.end.y
 
 	var background := PanelContainer.new()
 	background.name = "Background"
@@ -144,7 +152,7 @@ func _setup_ui() -> void:
 
 	var root_vbox := VBoxContainer.new()
 	root_vbox.name = "RootVBox"
-	root_vbox.add_theme_constant_override("separation", 6)
+	root_vbox.add_theme_constant_override("separation", 4)
 	background.add_child(root_vbox)
 
 	# --- 标题行 ---
@@ -179,7 +187,7 @@ func _setup_ui() -> void:
 
 	# 左：配方列表（可滚动）
 	var list_scroll := ScrollContainer.new()
-	list_scroll.custom_minimum_size = Vector2(250, 260)
+	list_scroll.custom_minimum_size = Vector2(150, 100)
 	list_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(list_scroll)
 
@@ -189,35 +197,42 @@ func _setup_ui() -> void:
 
 	body.add_child(VSeparator.new())
 
-	# 右：详情
+	# 右：详情（也套一层滚动——面板只有 256 高，详情内容会超出）
+	var detail_scroll := ScrollContainer.new()
+	detail_scroll.custom_minimum_size = Vector2(170, 100)
+	detail_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(detail_scroll)
+
 	var detail := VBoxContainer.new()
 	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	detail.add_theme_constant_override("separation", 6)
-	body.add_child(detail)
+	detail.add_theme_constant_override("separation", 4)
+	detail_scroll.add_child(detail)
 
 	var detail_head := HBoxContainer.new()
 	detail.add_child(detail_head)
 
 	_detail_icon = TextureRect.new()
-	_detail_icon.custom_minimum_size = Vector2(48, 48)
+	_detail_icon.custom_minimum_size = Vector2(32, 32)
 	_detail_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_detail_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	detail_head.add_child(_detail_icon)
 
 	_detail_name = Label.new()
-	_detail_name.add_theme_font_size_override("font_size", 17)
+	_detail_name.add_theme_font_size_override("font_size", 16)
 	_detail_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_detail_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail_head.add_child(_detail_name)
 
 	_detail_desc = Label.new()
 	_detail_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_desc.custom_minimum_size = Vector2(300, 60)
+	_detail_desc.custom_minimum_size = Vector2(170, 36)
 	_detail_desc.modulate = COLOR_DIM
 	detail.add_child(_detail_desc)
 
 	_detail_notes = Label.new()
 	_detail_notes.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_notes.custom_minimum_size = Vector2(300, 0)
+	_detail_notes.custom_minimum_size = Vector2(170, 0)
 	_detail_notes.modulate = Color(1.0, 0.85, 0.45)
 	detail.add_child(_detail_notes)
 
@@ -231,17 +246,18 @@ func _setup_ui() -> void:
 	_material_list.add_theme_constant_override("separation", 2)
 	detail.add_child(_material_list)
 
-	# --- 合成按钮 + 状态 ---
+	# --- 合成按钮 + 状态（放在详情列里，跟着选中的配方走；面板高度不够给整行按钮）---
 	_craft_button = Button.new()
 	_craft_button.text = "合成"
-	_craft_button.custom_minimum_size = Vector2(0, 40)
+	_craft_button.custom_minimum_size = Vector2(0, 34)
+	_craft_button.focus_mode = Control.FOCUS_NONE
 	_craft_button.pressed.connect(_on_craft_pressed)
-	root_vbox.add_child(_craft_button)
+	detail.add_child(_craft_button)
 
 	_status_label = Label.new()
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_status_label.custom_minimum_size = Vector2(0, 24)
-	root_vbox.add_child(_status_label)
+	_status_label.custom_minimum_size = Vector2(0, 18)
+	detail.add_child(_status_label)
 
 
 ## 清空容器：必须 remove_child 而不只是 queue_free
@@ -309,7 +325,7 @@ func _build_recipe_list() -> void:
 		var btn := Button.new()
 		btn.text = "%s x%d" % [out_name, recipe.output_count]
 		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		btn.custom_minimum_size = Vector2(0, 38)
+		btn.custom_minimum_size = Vector2(0, 26)
 		btn.pressed.connect(func() -> void: _select_recipe(recipe))
 		_recipe_list.add_child(btn)
 		_recipe_buttons.append(btn)

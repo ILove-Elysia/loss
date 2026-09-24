@@ -3,17 +3,25 @@
 # 背包UI - 显示整个背包界面
 #
 # 功能：
-# 1. 第一栏固定为「快捷栏」（= 背包前 hotbar_slots 格，与屏幕底部快捷栏同一批槽位）
-# 2. 下面才是普通背包格
-# 3. 左键拖拽物品到其它格 → 移动/交换位置/同类堆叠
-# 4. 右键使用可用物品（电池→电量 等）
-# 5. 悬停显示物品提示框
+# 1. 20 格按 10 列 × 2 行排布
+# 2. 左键拖拽物品到其它格 → 移动/交换位置/同类堆叠
+# 3. 右键使用可用物品（电池→电量 等）
+# 4. 悬停显示物品提示框
 #
-# 布局约定（关键）：
-#   快捷栏（屏幕底部 HUD，hud_ui.gd）镜像的是**背包的前 9 个槽位**（索引 0-8）。
-#   所以"背包第一栏就是快捷栏"在数据上本来就成立——本界面只是把 0..hotbar_slots-1
-#   单独排成一行、用金色边框标出来，让玩家一眼看出"这排就是快捷栏"。
-#   在背包里拖动物品进出这 9 格，就等于在调整快捷栏内容。
+# 布局约定（关键，2026-09-24 改成九宫格定位）：
+#   四个信息面板（背包/箱子/制作栏/装备栏）现在**可以同时打开**，各自占一块固定区域：
+#     左列 x 10..422 —— 背包(y 10..192) / 箱子(y 200..362) / 制作栏(y 370..626)
+#     右列 x 850..1270 —— 装备栏(y 370..710，anchor 全 1.0 贴视口右下角)
+#     中列 x 510..786 —— 短提示（HUD）
+#     底部 y 634..710 —— 快捷栏（HUD）
+#   所以本面板改成 **anchor 全 0 + 绝对 offset**（原来是锚在屏幕中心）。
+#   固定 1280×720 视口（见 project.godot 的 canvas_items + expand），绝对坐标是安全的。
+#
+#   槽位从 60 收到 **36**（2026-09-24 再缩一档）、列数从 9 提到 10：面板内容宽 396，
+#   10×36 + 9×4 = 396 正好放得下两行 20 格。
+#
+#   本面板**不再重复画一行「快捷栏」**：屏幕底部的快捷栏是常驻 HUD，
+#   面板里再画一份既占高度又容易和 HUD 抢点击。前 hotbar_slots 格仍用金色边框标出。
 #
 # 分层约定：
 #   UI 层不发号施令改数据：拖放只发 item_dropped(from, to)，
@@ -22,6 +30,13 @@
 
 class_name InventoryUI
 extends Control
+
+# ============================================
+# 面板区域（1280×720 九宫格，与 storage/crafting/equipment 共用一套）
+# ============================================
+
+## 左上：背包
+const RECT_INVENTORY := Rect2(10, 10, 412, 182)
 
 # ============================================
 # 信号
@@ -54,15 +69,18 @@ signal item_used(slot: int)
 			_connect_inventory_signals()
 			_create_slots()
 
-# 快捷栏格数（背包第一栏的格数）
+# 快捷栏格数（背包前 N 格，与底部 HUD 快捷栏是同一批槽位）
 # 必须与 HUD 快捷栏（hud_ui.gd 的 hotbar_slots）一致，否则两边对不上
 @export var hotbar_slots: int = 9
 
-# 普通背包区每行格数
-@export var columns: int = 9
+# 每行格数：10 列 × 2 行 = 20 格，正好塞进 492 宽的左列
+@export var columns: int = 10
 
 # 槽位间距
 @export var slot_spacing: int = 4
+
+# 槽位边长（px）。60 → 44 是为了在左列里放下 10 列。
+@export var slot_size: int = 36
 
 # ============================================
 # 私有变量
@@ -71,10 +89,7 @@ signal item_used(slot: int)
 # 槽位UI数组（下标 = 背包槽位索引）
 var _slot_uis: Array[ItemSlotUI] = []
 
-# 快捷栏行的容器（背包 0 .. hotbar_slots-1）
-var _hotbar_grid: GridContainer
-
-# 普通背包区的容器（背包 hotbar_slots .. max_slots-1）
+# 全部 20 格的容器
 var _grid_container: GridContainer
 
 # 物品提示框
@@ -165,6 +180,7 @@ func on_shown() -> void:
 	# 关闭期间走路自动拾取的物品，重新打开时要同步到格子
 	refresh()
 
+
 # ----------------------------------------
 # 刷新显示函数
 # 重新加载所有槽位
@@ -185,27 +201,27 @@ func refresh() -> void:
 # ----------------------------------------
 # 设置UI函数
 # 创建界面结构：
-#   标题
-#   「快捷栏」标签 + 第一栏（0..hotbar_slots-1）
-#   分隔线
-#   「背包」标签 + 其余格
+#   标题行（标题 + 关闭）
+#   20 格（10 列 × 2 行，前 9 格金色边框 = 快捷栏那 9 格）
 #   底部操作提示
 # ----------------------------------------
 func _setup_ui() -> void:
-	# 设置锚点：屏幕居中
-	anchor_left = 0.5
-	anchor_top = 0.5
-	anchor_right = 0.5
-	anchor_bottom = 0.5
-	# 面板尺寸：9 格 × 68px ≈ 612，留出内边距 → 680 宽
-	offset_left = -340
-	offset_top = -230
-	offset_right = 340
-	offset_bottom = 230
+	# 锚点全 0（左上角）+ 绝对 offset：面板钉死在九宫格的左上块。
+	# 【不要】调 set_anchors_preset——运行时 new() 的控件在 _ready 里调它会按当前
+	# 尺寸（0×0）重算 offset，面板会塌成一个点。显式写 anchor 数字是安全的。
+	anchor_left = 0.0
+	anchor_top = 0.0
+	anchor_right = 0.0
+	anchor_bottom = 0.0
+	offset_left = RECT_INVENTORY.position.x
+	offset_top = RECT_INVENTORY.position.y
+	offset_right = RECT_INVENTORY.end.x
+	offset_bottom = RECT_INVENTORY.end.y
 
 	# 创建背景
 	var background = PanelContainer.new()
 	background.name = "Background"
+	background.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(background)
 	# 背景也不能拦鼠标事件（后续子控件要能收到点击），只作视觉
 	background.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -213,32 +229,30 @@ func _setup_ui() -> void:
 	# 创建垂直布局
 	var vbox = VBoxContainer.new()
 	vbox.name = "VBoxContainer"
-	vbox.add_theme_constant_override("separation", 6)
+	vbox.add_theme_constant_override("separation", 4)
 	background.add_child(vbox)
 
-	# 创建标题
+	# ---- 标题行（标题左、关闭按钮右）----
+	var title_row = HBoxContainer.new()
+	title_row.name = "TitleRow"
+	vbox.add_child(title_row)
+
 	var title = Label.new()
 	title.name = "Title"
 	title.text = "背包"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 20)
-	vbox.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 18)
+	title_row.add_child(title)
 
-	# ---- 快捷栏区（第一栏）----
-	vbox.add_child(_make_section_label("快捷栏（数字键 1-9 选择）", true))
-
-	_hotbar_grid = GridContainer.new()
-	_hotbar_grid.name = "HotbarGrid"
-	_hotbar_grid.columns = hotbar_slots
-	_hotbar_grid.add_theme_constant_override("h_separation", slot_spacing)
-	_hotbar_grid.add_theme_constant_override("v_separation", slot_spacing)
-	vbox.add_child(_hotbar_grid)
+	var close_btn = Button.new()
+	close_btn.text = "关闭 (Tab)"
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.pressed.connect(close)
+	title_row.add_child(close_btn)
 
 	vbox.add_child(HSeparator.new())
 
-	# ---- 普通背包区 ----
-	vbox.add_child(_make_section_label("背包", false))
-
+	# ---- 20 格：10 列 × 2 行 ----
 	_grid_container = GridContainer.new()
 	_grid_container.name = "GridContainer"
 	_grid_container.columns = columns
@@ -247,27 +261,13 @@ func _setup_ui() -> void:
 	vbox.add_child(_grid_container)
 
 	# ---- 底部操作提示 ----
-	vbox.add_child(HSeparator.new())
 	var hint = Label.new()
 	hint.name = "Hint"
-	hint.text = "左键拖拽移动位置 · 右键使用物品 · 拖到储物箱可存入 · Esc 关闭"
+	hint.text = "拖拽整理 · Ctrl+拖拽取 1 · Shift+左键存箱 · 右键使用"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_font_size_override("font_size", 11)
 	hint.add_theme_color_override("font_color", Color(0.75, 0.78, 0.82))
 	vbox.add_child(hint)
-
-# ----------------------------------------
-# 生成分区小标题
-# 参数：text - 文本；accent - 是否用金色（快捷栏区）
-# ----------------------------------------
-func _make_section_label(text: String, accent: bool) -> Label:
-	var label = Label.new()
-	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	label.add_theme_font_size_override("font_size", 14)
-	label.add_theme_color_override("font_color",
-		Color(0.95, 0.8, 0.35) if accent else Color(0.8, 0.8, 0.8))
-	return label
 
 # ----------------------------------------
 # 设置提示框函数
@@ -282,13 +282,13 @@ func _setup_tooltip() -> void:
 # ----------------------------------------
 # 创建槽位函数
 # 根据背包大小创建槽位UI
-# 前 hotbar_slots 个进"快捷栏"容器，其余进"背包"容器
+# 全部 20 格进同一个 GridContainer（前 hotbar_slots 格用金色边框标出）
 # ----------------------------------------
 func _create_slots() -> void:
 	if not inventory:
 		return
 	# 防御：容器还没建（理论上不会走到，_ready 里先 _setup_ui）
-	if _hotbar_grid == null or _grid_container == null:
+	if _grid_container == null:
 		return
 
 	# 清除现有槽位
@@ -301,8 +301,11 @@ func _create_slots() -> void:
 	for i in range(inventory.max_slots):
 		var slot_ui = ItemSlotUI.new()
 		slot_ui.slot_index = i
-		slot_ui.custom_minimum_size = Vector2(64, 64)
-		# 前 N 格用金色边框标出来（快捷栏）；务必在 add_child 之前设，
+		# 36px（2026-09-24 缩小）：10 列 × 36 + 9 × 4 间距 = 396，面板内容宽 396 正好。
+		# 必须显式给尺寸——GridContainer 不会替子项算最小值，
+		# 少了这行格子会塌成 0×0（本项目踩过好几次）。
+		slot_ui.custom_minimum_size = Vector2(slot_size, slot_size)
+		# 前 N 格用金色边框标出来（= 底部快捷栏那 9 格）；务必在 add_child 之前设，
 		# 因为 _ready → _setup_styles 会按 accent 决定边框颜色
 		slot_ui.accent = i < hot_count
 
@@ -312,15 +315,14 @@ func _create_slots() -> void:
 		slot_ui.unhovered.connect(_on_slot_unhovered)
 		# 左键拖拽放下 → 移动/交换/堆叠
 		slot_ui.item_dropped.connect(_on_slot_item_dropped)
-		# 储物箱拖进背包 → 转调 Inventory.move_between
+		# 储物箱拖进背包 → 转调 Inventory.transfer_between
 		slot_ui.cross_dropped.connect(_on_cross_dropped)
 		# 拖拽数据带上来源标识（储物箱 UI 靠它区分"背包拖来的"）
 		slot_ui.source_id = "player"
 
-		if i < hot_count:
-			_hotbar_grid.add_child(slot_ui)
-		else:
-			_grid_container.add_child(slot_ui)
+		# 全部进同一个 GridContainer：append 顺序 = 槽位索引，
+		# refresh() 依赖 _slot_uis[i] 与背包第 i 格一一对应，别打乱。
+		_grid_container.add_child(slot_ui)
 		_slot_uis.append(slot_ui)
 
 	# 刷新显示
@@ -375,7 +377,11 @@ func _disconnect_inventory_signals() -> void:
 func _on_slot_clicked(slot: int, button: int) -> void:
 	match button:
 		MOUSE_BUTTON_LEFT:
-			_select_slot(slot)
+			# Shift+左键：整堆快速存进当前打开的储物箱（用户需求 2026-09-23）
+			if Input.is_key_pressed(KEY_SHIFT):
+				_quick_store_to_storage(slot)
+			else:
+				_select_slot(slot)
 		MOUSE_BUTTON_RIGHT:
 			use_item(slot)
 
@@ -383,29 +389,53 @@ func _on_slot_clicked(slot: int, button: int) -> void:
 # 槽位拖放回调（来自 ItemSlotUI.item_dropped）
 # 把 from 槽的物品放到 to 槽：空槽=移动，同类可堆叠=合并，否则=交换
 # 真正的数据操作交给 Inventory.move_item（它会发 item_changed，UI 自动回刷）
+# count > 0 时（Ctrl 拖拽）只搬这么多个，走 transfer_between 的拆堆路径
 # ----------------------------------------
-func _on_slot_item_dropped(from_slot: int, to_slot: int) -> void:
+func _on_slot_item_dropped(from_slot: int, to_slot: int, count: int) -> void:
 	if inventory == null:
 		return
 	if from_slot == to_slot:
 		return
-	inventory.move_item(from_slot, to_slot)
+	if count > 0:
+		Inventory.transfer_between(inventory, from_slot, inventory, to_slot, count)
+	else:
+		inventory.move_item(from_slot, to_slot)
 	# 兜底刷新：move_item 对两个槽位都发了 item_changed，正常已自动更新；
 	# 这里再刷一次，防止外部监听顺序导致的显示不同步。
 	refresh()
+
+
+# ----------------------------------------
+# Shift+左键：把这一格整堆"塞进"当前打开的储物箱
+#
+# 走 Inventory.stash_into（自动并进同类格、再找空格），而不是指定某一格——
+# 玩家按 Shift 要的是"别让我一格一格拖"，不是"放进第 7 格"。
+# 箱子没开就什么都不做：这个快捷键的语义是"存进那个箱子"，没有箱子就无从谈起。
+# ----------------------------------------
+func _quick_store_to_storage(slot: int) -> void:
+	if inventory == null:
+		return
+	var storage_inv := _find_open_storage()
+	if storage_inv == null:
+		return
+	# stash_into 内部会 set_slot/clear_slot（各自发 item_changed，UI 自动回刷），
+	# 这里再 refresh 一次做兜底，与其余搬运入口保持一致。
+	if Inventory.stash_into(inventory, slot, storage_inv) > 0:
+		refresh()
 
 # ----------------------------------------
 # 跨面板拖放回调（来自 ItemSlotUI.cross_dropped）
 # 目前唯一来源是储物箱：把箱子 from_slot 的物品搬到背包 to_slot
 # 整堆/合并/交换统一交给 Inventory.move_between（静态，箱子背包共用）
 # ----------------------------------------
-func _on_cross_dropped(source: String, from_slot: int, to_slot: int) -> void:
+func _on_cross_dropped(source: String, from_slot: int, to_slot: int, count: int) -> void:
 	if source != "storage" or inventory == null:
 		return
 	var storage_inv := _find_open_storage()
 	if storage_inv == null:
 		return
-	Inventory.move_between(storage_inv, from_slot, inventory, to_slot)
+	# count < 0 = 整堆（普通拖拽）；> 0 = 只搬这么多个（Ctrl 拖拽）
+	Inventory.transfer_between(storage_inv, from_slot, inventory, to_slot, count)
 	refresh()
 
 # ----------------------------------------

@@ -411,33 +411,144 @@ func move_item(from_slot: int, to_slot: int) -> void:
 # 箱子 ↔ 玩家背包 拖拽共用：目标空=整堆搬过去；同类可堆叠=合并（放不下的留在源槽）；
 # 否则=交换两个槽位。只改数据，各自通过 item_changed 信号回刷 UI。
 # 注意 Inventory._slots 是私有数组，这里全部走 get_item/set_slot/clear_slot 公共接口。
+#
+# 保留这个旧入口只为兼容：实现已经统一到 transfer_between（count = -1 就是整堆），
+# 新代码请直接用 transfer_between。
 # ----------------------------------------
 static func move_between(from_inv: Inventory, from_slot: int, to_inv: Inventory, to_slot: int) -> void:
-	if from_inv == null or to_inv == null or from_inv == to_inv:
-		return
-	var from_item = from_inv.get_item(from_slot)
+	transfer_between(from_inv, from_slot, to_inv, to_slot, -1)
+
+# ----------------------------------------
+# 跨背包搬运指定数量（静态）
+#
+# 参数：
+#   from_inv / from_slot - 来源
+#   to_inv / to_slot     - 落点（**具体某一格**，不是"随便找个位置"）
+#   count                - < 0 = 整堆（默认）；> 0 = 只搬这么多个
+# 返回：实际搬过去的数量
+#
+# 三种落点行为：
+#   ① 目标格为空     → 搬过去（整堆，或从源堆里拆 count 个出来）
+#   ② 同类可堆叠     → 合并，**最多合 count 个**；合不下的留在源槽
+#   ③ 是别的物品     → 整堆时交换两格；**指定数量时什么都不做**
+#      （Ctrl 拿 1 个去撞别人的格子，如果交换整堆，玩家会莫名其妙——
+#        那时他要的是"这一格放不下我这 1 个"，不是"把我的东西换走"）
+#
+# 允许 from_inv == to_inv（背包内部拆堆）：只要两格不同就行。
+# ----------------------------------------
+static func transfer_between(from_inv: Inventory, from_slot: int, to_inv: Inventory,
+		to_slot: int, count: int = -1) -> int:
+	if from_inv == null or to_inv == null:
+		return 0
+	if from_inv == to_inv and from_slot == to_slot:
+		return 0
+
+	var from_item: ItemInstance = from_inv.get_item(from_slot)
 	if from_item == null or from_item.is_empty():
-		return
-	var to_item = to_inv.get_item(to_slot)
+		return 0
+	var to_item: ItemInstance = to_inv.get_item(to_slot)
+	var whole: bool = count < 0 or count >= from_item.quantity
 
-	# 目标槽为空：整堆搬过去
+	# ---- ① 目标格为空 ----
 	if to_item == null or to_item.is_empty():
-		to_inv.set_slot(to_slot, from_item)
-		from_inv.clear_slot(from_slot)
-		return
+		if whole:
+			to_inv.set_slot(to_slot, from_item)
+			from_inv.clear_slot(from_slot)
+			return from_item.quantity
+		var piece: ItemInstance = from_item.split(count)
+		if piece == null:
+			return 0
+		to_inv.set_slot(to_slot, piece)
+		from_inv.set_slot(from_slot, from_item)
+		return piece.quantity
 
-	# 同类可堆叠：能合多少合多少，合不下的留在源槽
+	# ---- ② 同类可堆叠：能合多少合多少 ----
 	if from_item.can_merge_with(to_item):
-		to_item.merge(from_item)
+		var give: ItemInstance = from_item
+		if not whole:
+			give = from_item.split(count)
+			if give == null:
+				return 0
+		var before: int = give.quantity
+		to_item.merge(give)
+		var moved: int = before - give.quantity
+		# merge 是就地改 to_item，这里重新 set 一次只为触发 item_changed 回刷 UI
+		to_inv.set_slot(to_slot, to_item)
+		# 没合进去的还回源槽
+		if not whole:
+			from_item.merge(give)
 		if from_item.is_empty():
 			from_inv.clear_slot(from_slot)
 		else:
 			from_inv.set_slot(from_slot, from_item)
-		return
+		return moved
 
-	# 否则交换
-	to_inv.set_slot(to_slot, from_item)
-	from_inv.set_slot(from_slot, to_item)
+	# ---- ③ 别的物品：只有整堆才交换 ----
+	if whole:
+		to_inv.set_slot(to_slot, from_item)
+		from_inv.set_slot(from_slot, to_item)
+		return from_item.quantity
+	return 0
+
+# ----------------------------------------
+# 把源槽里的一整堆"塞进"目标背包（静态）
+#
+# 与 transfer_between 的区别：**不指定落点**。先并进已有的同类槽，再往空格里塞。
+# 这就是 Shift+左键「快速存入箱子 / 快速取回背包」要的行为——
+# 玩家不想为"背包 20 个空格里到底放哪一格"操心。
+#
+# 搬的是**实例本身**（不是新建），核心电量、温度这些挂在实例上的状态不会丢。
+# 返回实际搬走的数量。
+# ----------------------------------------
+static func stash_into(src: Inventory, from_slot: int, dst: Inventory) -> int:
+	if src == null or dst == null or src == dst:
+		return 0
+	var item: ItemInstance = src.get_item(from_slot)
+	if item == null or item.is_empty():
+		return 0
+	var start: int = item.quantity
+
+	# ---- ① 先并进已有的同类槽 ----
+	while item != null and not item.is_empty():
+		var stack_idx: int = dst.find_stackable_slot(item.data.item_id)
+		if stack_idx == -1:
+			break
+		var slot: ItemInstance = dst.get_item(stack_idx)
+		if slot == null:
+			break
+		var before: int = item.quantity
+		slot.merge(item)
+		if item.quantity >= before:
+			# 一格都没合进去（那格已经满了）→ 必须跳出，否则 find_stackable_slot
+			# 还会返回同一格，while 永不退出
+			break
+		dst.set_slot(stack_idx, slot)
+
+	# ---- ② 剩下的塞空格 ----
+	while item != null and not item.is_empty():
+		var empty_idx: int = dst.find_empty_slot()
+		if empty_idx == -1:
+			dst.inventory_full.emit()
+			break
+		if item.quantity <= item.data.max_stack:
+			# 整堆塞得下 → 直接把实例放进空格，**并置 item = null**：
+			# 否则下面收尾时还会把它当"没搬走的余量"写回源槽，
+			# 同一个实例挂在两个槽位上（复制物品级别的 bug）。
+			dst.set_slot(empty_idx, item)
+			item = null
+			break
+		var chunk: ItemInstance = item.split(item.data.max_stack)
+		if chunk == null:
+			break
+		dst.set_slot(empty_idx, chunk)
+
+	# ---- ③ 源槽收尾 ----
+	var left: int = item.quantity if item != null else 0
+	if item == null or item.is_empty():
+		src.clear_slot(from_slot)
+	else:
+		src.set_slot(from_slot, item)
+	return start - left
 
 # ----------------------------------------
 # 清空背包函数

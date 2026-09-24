@@ -1,47 +1,56 @@
 # 项目长期记忆（loss-land）
 
-> 2026-09-18 三次压缩。低频详章已拆到同目录 **`MEMORY-details.md`**（角色/温度/电量、建造/存档/UI、美术资产）——涉及这些领域时先读它。历史细则全文：`MEMORY.md.2026-09-18-full.bak`；过程记载：`2026-09-*.md` 日志。
+> **本文件＝高频铁律 + 领域指针；细节一律在 `MEMORY-details.md`**（角色/温度/电量、建造/存档、九宫格布局数值、容器交互、相机与渲染属性、攻击/死亡、采集数值与资源实体、世界与流式、美术资产）。历史全文 `MEMORY.md.2026-09-18-full.bak`；过程见 `2026-09-*.md`；**待办在 `E:\GameMake\loss\待办.md`**。
 
-## 铁律
-- `大纲.md`＝给人看的游戏说明书：禁版本号/状态标记/代码名/字段名/待办/踩坑；未实装写「（规划中）」；改数值后回写。过程与接口契约→每日日志。**待办清单在 `E:\GameMake\loss\待办.md`**（现有：电池对非机器人无效、保暖内衣保暖未做）。
-- **改 `.gd` 的 `@export` 字段（尤其删字段）必须先关 Godot 编辑器**：编辑器会用"中间态脚本"重新序列化 .tres 并落盘，无声吞掉当时脚本里不存在的字段（2026-09-22 事故：8 份资源 .tres 的 `resource_id`/`drop_item_id` 被吞 → `get_resource_scene(&"")` 取不到预制体 → 池为 null → 场上一个资源都没有，但记录层数据是有的）。铁证＝被编辑器保存的 .tres 会多出 `uid=`。**脚本改好不等于数据还在，改完必须跑 check_data_refs。**
-- **`check_data_refs.py` 报的每一条都要处理，不许标"历史遗留""与本次无关"跳过**——2026-09-22 那 16 条 `.tres 缺 resource_id` 就是线上 bug 本身，被放过后玩家进游戏看不到任何资源。
-- Godot **4.7.2**（2026-09-22 从运行日志核实，旧记忆写的 4.6 是错的）：`E:\SteamLibrary\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe`。改 .gd→`test/gd_static_lint.py`；改 .tres/.tscn→`test/check_data_refs.py`；最后实机。**编辑器开着别跑 headless**（抢 .godot）。**移出 .tscn/.tres 前必须先在编辑器里关掉它的标签页**——编辑器侦测到文件被外部删除会把内存里的场景重新落盘（已发生 3 次；`.godot/editor/editor_layout.cfg` 存着标签页，每次启动都恢复，所以要关标签页+重启，光改 .godot 没用：编辑器内存持有，退出会覆盖）。
-- **算「玩家到某物」距离必须取 `Physics` 子节点（或 `ViewFrustum.player_position()`），绝不读 `player` 根节点的 `global_position`**：player(Node3D 根)从不位移、永停在出生点，动的是它的 `Physics`(CharacterBody3D)。2026-09-22：采集中断判定读根节点 ⇒ 距离恒为"出生点→资源"(约59米) ⇒ 每下都判"走远" ⇒ 全资源采不动（旧一次性路径不查距离故一直没暴露）。ClickMover 的 `get_parent()` 就是根节点。
-- **手工写 `.tscn`：`@export` 的节点引用属性必须在节点头部写 `node_paths=PackedStringArray("属性名")`**，漏写则属性**静默 null 且不报错**。2026-09-22：tree.tscn 的 `Visual` 漏了 → `sprite` 恒 null → `has_art` 判 false，既叠出灰色兜底网格（树旁白方块）又让真精灵失控（采集完树不消失）。正例 map.tscn/player.tscn；最稳＝编辑器拖拽生成。
-- 查属性/枚举名→`raw.githubusercontent.com/godotengine/godot/4.7/doc/classes/<类>.xml`。写错属性名→_ready 抛错→灰屏，lint 查不出。
-- **运行时日志取证**：`C:\Users\chenx\AppData\Roaming\Godot\app_userdata\loss_land\logs\`（`godot.log` 是当次，历史按时间戳存）。分类开关在同目录 `debug_config.cfg`（`resource/player/item/build/...`），**默认 resource=false**，排查采集/生成问题先把它改成 true 再跑一次。存档 `saves/slot_N.json` 可直接用 Python 读（`world.resources.resources` 里每条有 resource_id/position/state）。
-- `:=` 右侧为 Variant 会报错（WARNING 当 ERROR）：`.get()`/`.call()`/无返回类型函数/双签名数学函数→floorf/roundf/absf；新函数必写返回类型。**但别把这条规则滥用到三角函数上**：4.x 里**只有同时存在 Variant 重载的函数才有 `f` 变体**，全部就 11 个＝absf/ceilf/clampf/floorf/lerpf/maxf/minf/roundf/signf/snappedf/wrapf；`sin/cos/tan/asin/acos/atan/atan2/sqrt/pow/exp/log/deg2rad/rad2deg` 从来只有 float 签名，**没有 sinf/asinf/sqrtf/powf**，写了直接 `Parser Error: Function "asinf" not found in base self` → 整份脚本解析失败（2026-09-22 sprite_facing.gd 事故：三方共用朝向求解器挂掉）。`gd_static_lint.py` 第 7 项专查这个。
-- 同文件多处 Edit 串行，改完 grep 复核；"modified since read"→重读。批量脚本改文件先 `cp` 后 `diff`；弱特征定位会命中错处→特征须含唯一内容；表格重排按显示宽度（east_asian_width W/F 计 2）。误改可救：`~/.workbuddy/file-history/<会话uuid>/<hash>@vN`，Grep 内容定位 hash 取上一 vN。
-- 核心系统＝class_name+static，不用 autoload；新增 class_name 手工补 `.godot/global_script_class_cache.cfg`（`gd_static_lint.py` 第 4 项会查），**或在使用处写 `const X := preload("res://…")` 直接绕开缓存**（编辑器开着时缓存可能未重扫，这样最稳）；移动 .gd 同步 5 处（.gd.uid/首行注释/.tscn ext_resource/test load()/class 缓存；`.godot/editor/*` 留旧路径别改）。
-- 数据表字符串标签≠已实装；枚举只能末尾追加（.tres 存数字）；对外集合 `.duplicate()`；只走 DebugConfig.log_msg/warn_msg。地形号 7海/8沙滩/10草原/11丛林/12矿区/13沙地/14火山/15雪地。取证目录 `Godot/app_userdata/loss_land/`。高频根因：绑定缺失/缓存未重扫/集合被清空/queue_free 延迟/控件 0×0/先设位置后入树。
-- 运行时 new 的控件禁用 `set_anchors_preset`（0×0 穿透）→显式 size/position；居中用 CenterContainer；autowrap Label 给确定正宽度；F5 内嵌运行不可用→独立窗口。
-- 查引用查全工程（预制体在 `tscn/prefab/`）；二进制 `.res` 内部字符串 grep 不到且带长度前缀→改路径长度会损坏，只能编辑器拖拽更新；引用者自身可能是死的（find_orphans 孤岛清单＝链已死）；引用图工具先排自引用。
-- 工具：`check_data_refs.py`（res:// 存在性+art/ 缺 .import）、`fix_import_paths.py`、`find_orphans.py`（**孤岛≠可删**）。流程：fix_import_paths→check_data_refs→find_orphans→gd_static_lint→实机。绝不 `cat` 大 .tres（72KB SaveTileSetRes）→head/grep；体积用 os.path.getsize（du -sk 虚报近一倍）。
-- **判断"某物品在游戏里是否可得"的唯一权威＝`script/crafting/crafting_system.gd` 配方表+掉落/初始背包，不是 `script/items/data/*.tres` 列表**。遗留 .tres 会长期挂在 `item_registry.tres` 且被测试脚本当夹具引用，看着像活的实为死数据（crude_axe/wooden_axe/wooden_pickaxe 就挂了很久，2026-09-18 才删）。**加档位/写进说明书前先查配方表**。
-- **删一件物品要同步 5 处**：`script/items/data/<id>_item.tres`、`item_registry.tres`（ext_resource 行 + items 数组条目）、`art/icons/<id>.png`+`.import`（移到 `E:\GameMake\loss\trash_*\`，别硬删）、测试夹具里的 `&"<id>"`、`项目结构说明.md` 物品表。删完 `check_data_refs.py` 会报物品数变化，可当校验。
+## 一、改文件 / 改数据的铁律
 
-## 分辨率与物理层
-- 1280×720 + canvas_items + expand + fractional ⇒ 视口恒 1280×720，UI 按此写。GraphicsConfig（静态→user://graphics_config.cfg）：全屏/窗口/界面缩放 0.7~2.0/垂直同步/帧率上限；`has_saved_config=false` 时不动窗口。
-- 只有两层有名字：layer_1=玩家、layer_2=地面/障碍；玩家与史莱姆 `collision_mask=3`。**障碍物一律 layer2+mask0**（建筑、树干同约定）。`ResourceSpawner.obstacle_layers=[4]`（层3）、水体层8。
+- `大纲.md`＝给人看的游戏说明书：禁版本号/状态标记/代码名/字段名/待办/踩坑；未实装写「（规划中）」；改数值后回写。过程与接口契约→每日日志。
+- Godot **4.7.2**：`E:\SteamLibrary\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe`。**改 .gd → `test/gd_static_lint.py`；改 .tres/.tscn → `test/check_data_refs.py`；最后实机。编辑器开着别跑 headless**（抢 `.godot`）。
+- **改 `.gd` 的 `@export` 字段（尤其删字段）必须先关编辑器**：编辑器会用"中间态脚本"重新序列化 .tres 落盘，无声吞掉当时脚本里不存在的字段（2026-09-22：8 份 .tres 的 `resource_id`/`drop_item_id` 被吞 ⇒ 场上一个资源都没有）。铁证＝被编辑器保存过的 .tres 会多出 `uid=`。**脚本改好 ≠ 数据还在，改完必跑 check_data_refs**。
+- **`check_data_refs.py` 报的每一条都要处理**，不许标"历史遗留/与本次无关"跳过——2026-09-22 那 16 条「.tres 缺 resource_id」就是线上 bug 本身。
+- **移出 .tscn/.tres 前先在编辑器关掉它的标签页**：编辑器发现文件被外部删除会把内存场景重新落盘（已发生 3 次，`grass_entity.tscn` 至今没删成）。标签页存在 `.godot/editor/editor_layout.cfg`、每次启动恢复 ⇒ 必须「关标签页 + 重启」。
+- **手工写 `.tscn`：`@export` 的节点引用属性必须在节点头写 `node_paths=PackedStringArray("属性名")`**，漏写则属性**静默 null 且不报错**（2026-09-22：tree.tscn 的 `Visual` 漏写 ⇒ `sprite` 恒 null）。正例 map.tscn/player.tscn；最稳＝编辑器拖拽生成。
+- **删物品同步 5 处**：`script/items/data/<id>_item.tres`、`item_registry.tres`（ext_resource 行 + items 条目）、`art/icons/<id>.png`+`.import`（移到 `E:\GameMake\loss\trash_*\`，别硬删）、测试夹具里的 `&"<id>"`、`项目结构说明.md` 物品表。删完 `check_data_refs.py` 会报物品数变化，可当校验。
+- **移动 .gd 同步 5 处**：`.gd.uid` / 首行注释 / `.tscn` ext_resource / `test` 的 `load()` / class 缓存；`.godot/editor/*` 留旧路径别改。**新增 `class_name` 要手工补 `.godot/global_script_class_cache.cfg`（lint 第 4 项查），或在使用处 `const X := preload("res://…")` 绕开缓存**。核心系统＝`class_name`+`static`，不用 autoload。
+- 同文件多处 Edit **必须串行，且一条消息只发一个**——并行会静默丢更新（2026-09-24 实测：2~3 个 Edit 只有一部分落盘，"成功"回执照给）。改完必 grep 复核；批量脚本改文件先 `cp` 后 `diff`；弱特征定位会命中错处→特征须含唯一内容。误改可救：`~/.workbuddy/file-history/<会话uuid>/<hash>@vN`。
+- 查属性/枚举名 → `raw.githubusercontent.com/godotengine/godot/4.7/doc/classes/<类>.xml`。写错属性名 → `_ready` 抛错 → 灰屏，lint 查不出。
 
-## 玩家 / 相机 / 战斗
-- player(Node3D)→Physics(CharacterBody3D, take_damage/heal)+Inventory/Equipment/Vitals/ClickMover；相机在 player/Camera_controller/…/Camera3D。
-- 相机 `base_fov=50`；机位＝`_focus+Vector3(0,sin(俯角),-cos(俯角))*(9.434*zoom)` 后 look_at；俯角 30°(zoom0.6)~55°(1.8)，默认1.0≈38°。
-- **贴图朝向＝`script/visual/sprite_facing.gd`（静态）**：水平朝向相机 + 绕贴图底边做俯角补偿，屏幕高度不随缩放变化（不补偿时 55° 俯角只剩 57% 高）。树/玩家/史莱姆三处共用，`billboard` 全关；树用 `facing_transform`（自带锚点）、角色/敌人用 `facing_basis` 只覆盖 Visual 的 basis（**别连位置一起写**，会抵消渲染插值）。引用一律 `const Facing := preload("res://script/visual/sprite_facing.gd")`。回归工具 `test/sprite_facing_check.py`（读 camera_3d.gd 的 @export 复算，不依赖实机）。
-- **yaw 必须落在 `rotate_step_degrees`(45°) 整数倍**；松手 `snap_yaw_to_step()`，读档 `_apply_camera` 也要；`_wrap_yaw()` 把 `_yaw`/`_target_yaw` 移回 [0,2π)。
-- 攻击＝`intersect_shape(mask=0xFFFFFFFF, 最多10个)` + 沿父链找 `take_damage`；判定体＝半径2m、360°竖直圆柱（高2.6、中心 y=脚下+1.0）。**不用 visual_node.basis 当朝向**（广告牌）。敌人受击靠 Area3D；无人机无碰撞（layer/mask 全0，`anchor_on_ready` 须在 add_child 前）。该查询对所有层生效⇒新增碰撞体会占名额。
-- **玩家碰撞体仅 1.0m 高**（h=1.0/r=0.33）但精灵 1.48m ⇒ 平行地面的投射物/射线必须飞 y≤1.2。地形＝单个 StaticBody3D 挂多段薄盒（厚1.0、中心-0.5）⇒ 岛面恒 y=0。
-- 鼠标点地＝相机射线与"玩家脚下高度水平面"解析求交（`_ground_point_under_mouse`），**不走物理射线**⇒加碰撞体不影响点击寻路。
-- 死亡：HP=0/落水→`_on_death()`（幂等）→RespawnSystem+FilterSystem.DEATH，HUD 5s→`revive()`；敌人判定统一 `Physics.is_alive()`。死亡冻结温度值；复活半属性：HP/饱食度/自身电量各半、体温常温、`reset()` 清零核心、`revive()` 半血 `maxi(int(max_health*0.5),1)`。
-- XML 实查：`SpriteBase3D.shaded` 默认 **false** ⇒ Sprite3D 不吃光照。`billboard`：0=关（**本项目一律 0**，朝向交给 SpriteFacing）、2=FIXED_Y（只跟 yaw 不跟俯角 ⇒ 高俯角下贴图被压扁 cos 值）、1=ENABLED（会随俯角倾倒）。`alpha_cut`：**2 = OPAQUE_PREPASS（边缘软+排序正确）**，0 混合（排序问题）、1 DISCARD（边缘硬，未开 AA）。`render_priority` 仅 alpha_cut=0 有效。**精灵是双面渲染的平面**：屏幕上左不左右不右只看"局部 +X 落在相机右方向还是它的反向" —— **`SpriteFacing` 的 +X == 相机右方向（未镜像，与引擎 billboard 同侧）；旧的 `look_at(相机方向)` 的 +X == -相机右方向（镜像）**。⚠ 2026-09-22 记的"镜像×镜像＝不变"是**错的**（把"哪一面朝向相机"和"X 轴朝哪"混为一谈），据此换朝向时漏改 flip_h，直接导致「人物左右方向反了」，详见下条。
-- **左右翻转符号（换朝向系统必查）**：`flip_h` 的语义取决于该实体节点自带的镜像次数。玩家 `player.tscn` 的 BaseBody 烘了 `scale(-2.6434,-2.6434,1)`(=绕Z转180°) + `flip_v=true`，两者抵消后**净剩一次水平镜像** ⇒ **`spr.flip_h = not facing_left`**（true=屏幕上朝右）。史莱姆的 Sprite 是单位变换、无内置镜像 ⇒ **`sprite.flip_h = _facing_left`**（true=朝左）。**两边符号相反，不能互抄**；史莱姆的判据还必须用**相机右方向**（`cam.global_basis.x`）而不是世界 X，否则 Q/E 转镜头 90° 后左右就反。`test/sprite_facing_check.py` 第 3 项核手性、第 4 项核这两个符号，写错会直接报失败。
+## 二、GDScript 语言坑
 
-## 世界 / 资源 / 流式
-- 地图 1600×1600，岛半径≈430，出生点＝中央草原；海洋格无碰撞→自由落体。
-- **采集只有一条路（2026-09-18 统一）**：`work_amount`（血量）÷ 工具 `harvest_work`（每击伤害）＝要采几下。`_harvest_by_work()` 每下 = 资源播 `harvest_animation` + 人物播作业动画 + 等 `work_interval` + 扣一次工作量，扣完才掉落；走远/死亡中断但**进度保留**并随记录层存档（`work_remaining`）。数值：树/大石头/铁矿/煤矿均 24（**石 6 下 / 铁 4 下**），草/木棍/浆果/小石块 = 1（挥一下就掉，间隔 0/0.2/0.4/0.3 沿用旧耗时）。旧的一次性 `_harvest_once`/`harvest_time`/`required_tool`/`harvest_speed_bonus`/`get_harvest_speed_multiplier` 全删。
-- 工具门槛＝资源 `allowed_tool_tags`（树 `axe`、大石头/铁矿/煤矿 `pickaxe`）vs 物品 `tags`，**留空 = 空手可采**，没有任何旧判定兜底；空手每击 `HAND_WORK_PER_HIT=1`。**在役工具只有 4 把**：石斧4/石镐4/铁斧6/铁镐6（均有配方）。`ItemData.tool_type` 只剩说明文案用途。人物作业动画 `physics.play_harvest_action()` 播 SpriteFrames 的 **`harvest`** 动画（2026-09-23 起**不再借用 attack**，attack 末段带白色剑光弧、砍树时播它出戏）且**不触发伤害**——`_on_attack_animation_frame_changed` 仍有 `if not is_attacking: return` 闸。`harvest` 帧取自精灵表**第 4 行 y=168**（`Rect2(56,168)` 抬臂 ↔ `Rect2(0,168)` 俯身，3 帧 loop=0 speed=5）；`is_working` 标志位与 `is_attacking` 独立、专管"作业独占动画"，六处配对（play 置位 / finished 清 / 移动让位 / 攻击抢占 / 死亡 / 复活），少一处就会被 `_update_animation` 同帧切回 idle（**这就是"砍树只闪一下/看不到动作"的根因**）。常驻核对 `test/player_anim_check.py`。
-- 区域→资源 `task_system.REGION_RESOURCE_MAP`：草原/丛林=twig·grass·tree·berry·pebble；矿区=pebble·stone·iron_ore；火山=coal·iron_ore；雪地/沙地/沙滩=twig·pebble。**石头只在矿区、煤只在火山**；`wood`＝"木材"；树要斧、大石/矿要镐；采集 `ResourceManager._try_harvest_nearest()`（水平3m、不挂 Area3D、只采最近一个）。
-- 资源实体＝`ResourceEntity`(Node3D)+组件 StateMachine/Visual/Interaction/Regeneration。**8 种里只有 tree 用专用预制体**，其余走 `tscn/resource_entity.tscn`+`ResourceData.growing_texture`（都未配→`_build_placeholder_mesh()` 兜底）。**兜底判据是「sprite 是否带 SpriteFrames」**，不是「growing_texture 是否为空」，否则贴了真帧动画的树会被再叠一套网格。
-- `tscn/prefab/tree.tscn`：根 Node3D(`resource_entity.gd`+`tree_data.tres`)/`Sprite`(AnimatedSprite3D，**billboard 0**——朝向由 `resource_visual.gd::_apply_facing` 每帧接管、`alpha_cut 2`)/`Visual`(`resource_visual.gd`，`sprite=NodePath("../Sprite")`)/`CollisionBody`(CharacterBody3D layer2 mask0)+`CollisionShape3D`(Cylinder r0.45 h2.0 中心 y1.0)。帧动画＝`art/props/tree_1/tree_frames.tres`（`growing` 单帧/`chop` 25帧@30fps 不循环/`sway` 25帧@7fps 循环备用），`ResourceData.harvest_animation` 指定砍伐动画名。**尺寸耦合**：`pixel_size=0.004`⇒贴图矩形 4.0×4.8m、内容高 3.5m；Sprite `position.y=1.756` 让树干底落 y=0（**改 pixel_size 必须重算**）。那 25 帧实为风摆循环（帧0=帧12=帧24），非砍伐形变。
-- 流式 ViewFrustum：LOAD_RADIUS={resource/enemy/building:70, drop:50}+HYSTERESIS=24，判定＝距玩家平面距离（勿用屏幕视锥）；资源 `_records` 数据层+`_entities` 表现层，卸载退对象池绝不 queue_free，存档源=_records；敌人+掉落物：挂起=remove_child（状态保留），放回=add_child+设 global_position，**绝不重建**；掉落物带 `instance`，`_tick_core` 用自身坐标推进核心温度值。
+- **`:=` 右侧为 Variant 会报错**（WARNING 当 ERROR）：`.get()` / `.call()` / 无返回类型函数 / 双签名数学函数；新函数必写返回类型。**4.x 只有 11 个函数有 `f` 变体**＝`absf/ceilf/clampf/floorf/lerpf/maxf/minf/roundf/signf/snappedf/wrapf`；`sin/cos/tan/asin/acos/atan/atan2/sqrt/pow/exp/log/deg2rad/rad2deg` **没有 sinf/asinf/sqrtf/powf**，写了直接 `Function "asinf" not found` ⇒ **整份脚本解析失败**（2026-09-22 sprite_facing.gd 事故）。`gd_static_lint.py` 第 7 项专查。
+- 信号 arity 是**运行时**检查：`signal` 增删参数后 `.connect()` 回调签名不匹配**不报错**，直到信号真触发才炸（2026-09-23 storage_ui 少一个 count）。常驻 `test/signal_arity_check.py`。
+- **"每帧强制对齐状态"的函数会吃掉外来的一次性动画**：`physics._update_animation()` 每帧 `else: spr.play("idle")`，任何在 `await` 回调里播的动画都会同帧被切走 ⇒ 一次性动画必须有独立独占标志位（见 `is_working`）。
+
+## 三、运行时取证与排查
+
+- 日志：`%APPDATA%\Godot\app_userdata\loss_land\logs\`（`godot.log` 是当次，历史按时间戳存）。分类开关同目录 `debug_config.cfg`（**默认 resource=false**，排查采集/生成先改 true 再跑）。存档 `saves/slot_N.json` 可用 Python 直读（`world.resources.resources` 每条有 resource_id/position/state）。
+- **高频根因（先查这 6 个）**：绑定缺失 / 缓存未重扫 / 集合被清空 / queue_free 延迟 / 控件 0×0 / 先设位置后入树。
+- 运行时 `new` 的控件**禁用 `set_anchors_preset`**（0×0 会悬停不到且点击穿透到 3D）→ 显式 size/position；居中用 CenterContainer；autowrap Label 给确定正宽度；F5 内嵌运行不可用 → 独立窗口。
+- 工具链顺序：`fix_import_paths.py` → `check_data_refs.py` → `find_orphans.py`（**孤岛 ≠ 可删**）→ `gd_static_lint.py` → 实机。查引用要查全工程（预制体在 `tscn/prefab/`）；二进制 `.res` 内部字符串 grep 不到且带长度前缀 → 改路径长度会损坏，只能编辑器拖拽更新；**引用者自身可能是死的**。绝不 `cat` 大 .tres → head/grep；体积用 `os.path.getsize`（`du -sk` 虚报近一倍）。
+- **判断"某物品在游戏里是否可得"的唯一权威＝`script/crafting/crafting_system.gd` 配方表 + 掉落/初始背包**，不是 `script/items/data/*.tres` 列表——遗留 .tres 会长期挂在 `item_registry.tres` 且被测试脚本当夹具引用，看着像活的实为死数据。**加档位/写进说明书前先查配方表**。
+
+## 四、位置与距离（易错重灾区）
+
+- **算「玩家到某物」距离必须取 `Physics` 子节点（或 `ViewFrustum.player_position()`），绝不读 `player` 根节点的 `global_position`**：根节点从不位移、永停在出生点，动的是它的 `Physics`(CharacterBody3D)。2026-09-22：采集中断判定读根节点 ⇒ 距离恒为"出生点→资源"(≈59 m) ⇒ 每下都判"走远" ⇒ 全资源采不动。ClickMover 的 `get_parent()` 就是根节点。
+
+## 五、分辨率与 UI 布局
+
+- 1280×720 + `canvas_items` + `expand` + `fractional` ⇒ 设计视口恒 1280×720；GraphicsConfig（静态 → `user://graphics_config.cfg`）管全屏/窗口/界面缩放 0.7~2.0/垂直同步/帧率上限。
+- **贴视口边缘锚定（2026-09-24 事故，必守）**：`ui_scale`（→ `content_scale_factor`）>1 会把**逻辑视口缩小**（1.05 ⇒ 1219×686），**写死绝对 x/y 的控件全被裁出屏幕**（玩家报"装备栏超出屏幕"，静态 lint 查不出）。规则：**右列/底部控件一律 `anchor_*=1.0` + 负 offset**（按钮列/状态栏/小地图列/装备栏 `offset_right = -RIGHT_MARGIN`；快捷栏贴底），只有左列/中列用左上锚 + 绝对 offset。改布局后必跑 `test/ui_grid_layout_check.py`（纯 Python 复算，第 5 节专查锚点）+ `ui_grid_layout_test.gd`（临时把 `content_scale_factor` 调到 1.05 复测不越界）。中文 ASCII 图按 `east_asian_width` 排（`test/_gen_layout_art.py`）。**九宫格分区与全部数值 → 详章**。
+- 碰撞层只有两层有名字：layer_1＝玩家、layer_2＝地面/障碍；**障碍物一律 layer2 + mask0**（建筑、树干同约定）。详见详章。
+
+## 六、玩家 / 相机 / 战斗（易错点）
+
+- `player`(Node3D) → `Physics`(CharacterBody3D, `take_damage`/`heal`) + Inventory/Equipment/Vitals/ClickMover；相机在 `player/Camera_controller/…/Camera3D`。机位/俯角/Sprite3D 属性表 → 详章。
+- **贴图朝向＝`script/visual/sprite_facing.gd`（静态）**，树/玩家/史莱姆三处共用，`billboard` 全关；树用 `facing_transform`、角色/敌人用 `facing_basis` 只覆盖 Visual 的 basis（**别连位置一起写**，会抵消渲染插值）。引用一律 `const Facing := preload("res://script/visual/sprite_facing.gd")`。
+- **左右翻转符号（换朝向系统必查）**：`flip_h` 语义取决于该实体自带的镜像次数，**不同实体可能相反、不能互抄**。玩家净剩一次水平镜像 ⇒ `spr.flip_h = not facing_left`；史莱姆无内置镜像 ⇒ `sprite.flip_h = _facing_left`，且判据必须用**相机右方向**（`cam.global_basis.x`）而非世界 X。`sprite_facing_check.py` 第 3/4 项核这个。
+- **yaw 必须落在 `rotate_step_degrees`(45°) 整数倍**；松手 `snap_yaw_to_step()`，读档 `_apply_camera` 也要；`_wrap_yaw()` 把 `_yaw`/`_target_yaw` 移回 `[0,2π)`。
+- 玩家碰撞体仅 1.0 m 高（精灵 1.48 m）⇒ 平行地面的投射物/射线必须飞 y ≤ 1.2；鼠标点地走**解析求交**，故加碰撞体不影响点击寻路。数值 → 详章。
+
+## 七、世界 / 资源 / 容器（框架 + 指针）
+
+- **采集只有一条路**：`work_amount` ÷ 工具 `harvest_work` ＝ 要采几下；走远/死亡中断但**进度保留**并存档（`work_remaining`）。工具门槛＝`allowed_tool_tags` vs 物品 `tags`，**留空＝空手可采（每击 1）**；**在役工具只有 4 把**（石斧4/石镐4/铁斧6/铁镐6）。作业动画＝SpriteFrames 的 **`harvest`**（不借 attack、不触发伤害），`is_working` 六处配对。地图尺度/区域映射/数值/流式 → 详章。
+- 资源实体：**8 种里只有 tree 用专用预制体**，其余走 `tscn/resource_entity.tscn` + `ResourceData.growing_texture`（**8 种全未配贴图 → 程序化兜底网格**）。**兜底判据＝「sprite 是否带 SpriteFrames」**，不是「growing_texture 是否为空」（否则贴了真帧动画的树会被再叠一套网格）。
+- 卸载/挂起一律**复用节点**（对象池 or `remove_child`），绝不 queue_free，否则状态丢失。
+- **数据层唯一入口＝`Inventory` 静态方法**（UI 只发信号）：`transfer_between`（`count<0` 整堆 / `>0` 拆堆）/ `stash_into`（自动找位、**用实例本身**故核心电量不丢）。
+- **四块信息面板（背包/箱子/合成/装备）各占固定区、可同刻全开**（旧 `WINDOW_PANELS` 互斥已废 → `LAYOUT_PANELS`），只有全屏类打开才收它们；面板一律 `anchor=0` + 绝对 `offset`。改这条必须同步改 `ui_smoke_test.gd` §5b。快捷键：**背包内 Shift+左键存入 / Ctrl+拖拽只拿 1 个 / 箱内右键取1·Ctrl取半·Shift全取**；修饰键点击须**延后到松开且未拖拽**再判定，拖拽字典带 `count`。

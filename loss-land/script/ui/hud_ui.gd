@@ -2,26 +2,87 @@
 # ============================================
 # HUD界面 - 游戏主界面显示
 #
-# 功能说明：
-#   1. 快捷栏（底部中央，9格）- 存放当前使用的物品
-#   2. 状态栏（左上角：电量、生命值、体温）
-#   3. 按键提示（底部中央）- 显示操作提示文字
-#   4. 右上角：小地图（常驻，只有按钮开关，可滚轮缩放/拖动查看）
-#      + 暂停 / 大地图（M）/ 小地图 三个按钮，时钟在小地图下方
+# 布局（2026-09-24 三次改版：物品格与贴图整体缩小，左上三块面板跟着收紧）
 #
-# 连接到其他系统：
-#   - Player: 调用 update_health() / update_power() / update_temperature()
-#   - Inventory: Tab键切换背包显示
+#   左列 x 10..502      中列 x 510..786    右列 x 794..1270
+#   ------------------------------------------------------------
+#   背包 y 10..192      （无常驻件）       小地图 x 890..1102 y 10..242
+#   箱子 y 200..362     吐司 y 556..582    [ 时间 ]  x 890..1102 y 246..274
+#   制作 y 370..626                        按钮列    x 1110..1270 y 10..118
+#                                          状态栏    x 1110..1270 y 126..~258
+#   ------------------------------------------------------------
+#   左列三块面板统一宽 412（x 10..422），列边界仍是 502。
+#   装备栏 x 850..1270、y 370..710（420×340，右列下半）
+#   快捷栏 y 634..710，居中于左列+中列（中心 x≈398）
 #
-# 修改提示：
-#   - 快捷栏槽位数：修改 hotbar_slots 导出变量
-#   - 状态栏位置：修改 _create_status_panel() 中的 offset 值
-#   - 快捷栏位置：修改 _create_hotbar() 中的 position 和 slot_size
-#   - 按键绑定：修改 _input() 中的 action 名称
+#   **左列 / 中列**的信息面板一律止步于 y=626（`CONTENT_BOTTOM`），
+#   底下 y 634..710 这条带子留给快捷栏；**右列例外** —— 装备栏可用到 710。
+#
+# ⚠ 上面这些是**1280×720 设计视口**下的落点。界面缩放
+#   （GraphicsConfig.ui_scale → content_scale_factor）>1 时，canvas_items + expand
+#   会把逻辑视口缩小（1.05 ⇒ 1219×686），写死的绝对坐标会被裁到屏幕外。
+#   所以**右列与底部一律走贴边锚定**（anchor 1.0 + 负 offset）：
+#   按钮列 / 状态栏 / 装备栏 → 视口右边缘；快捷栏 → 视口底边。
+#   新增贴右/贴底的元素请照做，别再写绝对 x/y。
+#
+# 修改提示：位置都走下面那组布局常量，别再散落魔法数字。
 # ============================================
 
 class_name HUDUI
 extends Control
+
+# ============================================
+# 九宫格布局常量（1280×720 固定视口；与 script/ui/* 的 RECT_* 一套）
+# ============================================
+
+const MARGIN := 10.0
+const LEFT_COL_LEFT := 10.0
+const LEFT_COL_RIGHT := 502.0
+const MAP_COL_LEFT := 510.0
+const MAP_COL_RIGHT := 786.0
+const RIGHT_COL_LEFT := 794.0
+const RIGHT_COL_RIGHT := 1270.0
+## 右列控件距**视口右边缘**的边距（= 1280 − 1270 = 10）。
+## 右列三样（按钮列 / 状态栏 / 装备栏）实际都锚在视口右边缘
+## （anchor_left = anchor_right = 1.0 + 负 offset），所以在 1280 宽的视口里
+## 它们正好落在 RIGHT_COL_RIGHT=1270；而**视口被界面缩放缩小时会跟着往里收**。
+## ⚠ 界面缩放（GraphicsConfig.ui_scale → content_scale_factor）>1 时，
+## canvas_items + expand 会把**逻辑视口**缩小（1.05 ⇒ 1219×686），
+## 所有按 1280 写死的绝对坐标都会被裁到屏幕外 —— 右列/底部的控件必须走贴边锚定。
+const RIGHT_MARGIN := 1280.0 - RIGHT_COL_RIGHT
+## **左列 / 中列**信息面板的下边界（给快捷栏带上沿留 8px 间隙）。
+## 右列不受这条约束 —— 装备栏一路用到 HOTBAR_BOTTOM（见 equipment_ui.gd 的 RECT_EQUIPMENT）。
+## 左列三块信息面板的统一宽度（10 列 ×36 + 9×4 间距 = 396，左右各留 8 内边距）
+const PANEL_W := 412.0
+## 左列三块面板之间的竖向间隙
+const PANEL_GAP := 8.0
+const CONTENT_BOTTOM := 626.0
+const HOTBAR_TOP := 634.0
+const HOTBAR_BOTTOM := 710.0
+
+# --- 右上角组合块：左列小地图+时钟、右列三个按钮+状态栏，整体贴着右上角 ---
+## 按钮列里的按钮个数（暂停 / 大地图 / 小地图开关）——改这个数，STATUS_TOP 会自动跟着走
+const BTN_COUNT := 3
+const BTN_W := 160.0
+const BTN_H := 32.0
+const BTN_SEP := 6.0
+## 小地图列与按钮列之间的横向间隙
+const BLOCK_GAP := 8.0
+## 按钮列底部 = MARGIN + (32+6)×3 − 6 = 118
+const BTN_COL_BOTTOM := MARGIN + (BTN_H + BTN_SEP) * BTN_COUNT - BTN_SEP
+## 小地图列底部 = 10 + 小地图高 232 + 间隙 4 + 时钟 28 = 274。
+## 装备栏顶（380）必须 ≥ 这个值 + MARGIN —— 由 test/ui_grid_layout_check.py 交叉核对。
+const CLUSTER_BOTTOM := 274.0
+## 状态栏：按钮组**正下方**、与按钮列同宽（= BTN_COL_BOTTOM + BLOCK_GAP = 126）
+const STATUS_WIDTH := 160.0
+const STATUS_TOP := BTN_COL_BOTTOM + BLOCK_GAP
+## 状态栏排版：可用高度 = STATUS_TOP(126)..装备栏顶(380) = 254px（很充裕）。
+## 5 行（⚡/🔋/♥/🌡/🍖）按 5×~19 + 4×4 + 2×8 ≈ 127 估，留 ~30px 余量。
+## 这三个值是上一版（可用高度只有 138px）为了塞进 5 行收紧出来的，现在有富余也先别动——
+## 换字体/加行都会立刻吃掉这点余量，要改先按上面的式子算一遍。
+const STATUS_FONT_SIZE := 14
+const STATUS_ROW_SEP := 4
+const STATUS_PAD := 8
 
 # ============================================
 # 信号定义
@@ -98,17 +159,14 @@ const CORE_ROW_COLOR: Color = Color(0.45, 0.85, 1.0)
 var _temperature_label: Label
 var _hunger_label: Label
 
-## 控制提示 Label 节点
-var _hints_label: Label
-
-## 右上角容器（小地图 + 暂停/地图开关按钮 + 下方时钟）
+## 右上角容器（三个按钮竖排：暂停 / 大地图 / 小地图开关）
 var _topright: VBoxContainer
 
 ## 小地图实例（常驻，默认显示；开关只切它自己的 visible）
 var _minimap: MinimapUI = null
 
 ## 小地图的固定占位：关掉地图时它仍然占着同一块尺寸，
-## 否则 HBox 会塌缩，右侧两个按钮会整体左移。
+## 否则 VBox 会塌缩，小地图下方的时钟会往上跳。
 var _map_slot: Control = null
 
 ## 菜单按钮引用（用于后续功能扩展）
@@ -311,7 +369,7 @@ func refresh_all_status() -> void:
 # ============================================
 
 ## 初始化所有UI组件的入口方法
-## 调用顺序：锚点设置 -> 快捷栏 -> 状态栏 -> 提示 -> 按钮
+## 调用顺序：锚点 -> 快捷栏 -> 状态栏 -> 右上角组合块 -> 死亡 UI -> 吐司
 func _setup_ui() -> void:
 	# 1. 设置控件全屏覆盖整个视口
 	full_anchor()
@@ -319,19 +377,16 @@ func _setup_ui() -> void:
 	# 2. 创建底部快捷栏
 	_create_hotbar()
 	
-	# 3. 创建左上角状态栏面板
+	# 3. 创建状态栏面板（右上角组合块的下半、按钮组正下方）
 	_create_status_panel()
 	
-	# 4. 创建底部中央操作提示
-	_create_control_hints()
-	
-	# 5. 右上角：小地图（常驻）+ 暂停/地图开关按钮 + 小地图下方的时钟
+	# 4. 右上角组合块：左列小地图+时钟、右列三个按钮
 	_create_topright_cluster()
 
-	# 6. 死亡 UI：居中底部的「你已死亡」+ 复活按钮（平时隐藏，玩家死亡才出现）
+	# 5. 死亡 UI：居中底部的「你已死亡」+ 复活按钮（平时隐藏，玩家死亡才出现）
 	_create_death_ui()
 
-	# 7. 居中底部的轻提示条（物品使用被拒等短反馈，平时隐藏）
+	# 6. 居中底部的轻提示条（物品使用被拒等短反馈，平时隐藏）
 	_create_toast()
 
 ## 每帧刷新时钟文本（节流 0.25 秒一次）
@@ -378,20 +433,26 @@ func _create_hotbar() -> void:
 	# CENTER 使得所有子节点水平居中排列
 	hotbar_container.alignment = BoxContainer.ALIGNMENT_CENTER
 	
-	# 用锚点定位，不用绝对像素：窗口缩放时自动跟随，不会错位。
+	# 定位：居中于**左列 + 中列**（中心 x≈398），y 634..710。
+	# 为什么不是屏幕正中（640）：九宫格把右列下半给了装备栏，
+	# 快捷栏压在左+中列下方才和草图一致（见本文件顶部的布局图）。
+	# 用锚点而不是绝对像素：窗口缩放时自动跟随。
 	# PRESET_CENTER_BOTTOM 把锚点设为 (0.5, 1, 0.5, 1)；
-	# 左右锚点重合在中心时，必须 grow_horizontal = BOTH 才会对称向两侧扩展，
-	# 否则容器只向单边生长、看起来"没居中"。
+	# 左右锚点重合在中心时，必须 grow_horizontal = BOTH 才会对称向两侧扩展。
 	hotbar_container.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
 	hotbar_container.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	hotbar_container.offset_top = -100
-	hotbar_container.offset_bottom = -20
+	# offset_left == offset_right → 把"中心"从 640 平移到 398
+	var hot_center_shift: float = (LEFT_COL_LEFT + MAP_COL_RIGHT) * 0.5 - 640.0
+	hotbar_container.offset_left = hot_center_shift
+	hotbar_container.offset_right = hot_center_shift
+	hotbar_container.offset_top = HOTBAR_TOP - 720.0
+	hotbar_container.offset_bottom = HOTBAR_BOTTOM - 720.0
 
 	# 栏本身不收鼠标，只有槽位收；否则底部一整条会吞掉 3D 世界的点击。
 	hotbar_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# 设置容器最小高度为80像素
-	hotbar_container.custom_minimum_size = Vector2(0, 80)
+	hotbar_container.custom_minimum_size = Vector2(0, 64)
 
 	# 添加到 HUD 节点下
 	add_child(hotbar_container)
@@ -412,7 +473,14 @@ func _create_hotbar_slot(index: int) -> ItemSlotUI:
 	var slot = ItemSlotUI.new()
 	slot.name = "HotbarSlot%d" % index
 	slot.slot_index = index  # 记录索引，用于识别按下了哪个槽位
-	slot.custom_minimum_size = Vector2(64, 64)  # 槽位大小 64x64
+	slot.custom_minimum_size = Vector2(52, 52)  # 槽位大小 52x52（2026-09-24 缩小）
+	# 容器本身高 76（HOTBAR_TOP..BOTTOM）而槽只有 52：不写这行 HBox 会把槽
+	# 沿交叉轴拉伸成 52×76 的长方形。SHRINK_CENTER = 保持正方形 + 垂直居中。
+	slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# 来源标识 = "player"：快捷栏格就是背包的前 9 格（同一批数据），
+	# 标成同一个来源，背包面板和快捷栏之间才能互相拖拽——
+	# 之前留空，两边 source 字符串不相等，被当成"跨面板"而各自拒绝（2026-09-23 修）。
+	slot.source_id = "player"
 	# 原先没有连这根线，槽位纯装饰，点了毫无反应
 	slot.clicked.connect(_on_hotbar_slot_clicked)
 	# 左键拖拽放下：快捷栏格 = 背包前 9 格，拖拽即调换它们在背包中的位置
@@ -548,9 +616,14 @@ func _update_status_panel_size() -> void:
 	if _status_panel == null:
 		return
 	_status_panel.reset_size()
+	# 状态栏是**右边缘锚定**（anchor_left = anchor_right = 1.0）。reset_size() 按
+	# "左边缘不动"重算 offset_right —— 万一某行内容把宽度撑过 STATUS_WIDTH，
+	# 右边缘就会被顶出视口。这里把两条 offset 重新钉回贴边位置（幂等）。
+	_status_panel.offset_right = -RIGHT_MARGIN
+	_status_panel.offset_left = -(STATUS_WIDTH + RIGHT_MARGIN)
 
 
-## 创建左下角状态栏面板
+## 创建状态栏面板（右上角组合块的右列、按钮组正下方）
 ## 显示内容：电量⚡（仅机器人）、生命值♥、体温🌡、饱食度🍖
 ## 面板采用半透明黑色背景，圆角设计
 func _create_status_panel() -> void:
@@ -559,17 +632,21 @@ func _create_status_panel() -> void:
 	var panel := _status_panel
 	panel.name = "StatusPanel"
 	
-	# 左上角（界面草图：状态栏在左上、小地图在右上）。
-	# PRESET_TOP_LEFT 把锚点设为 (0, 0, 0, 0)，offset 直接向下量。
-	panel.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
-	panel.offset_left = 20
-	panel.offset_right = 150   # 面板宽度 130
-	panel.offset_top = 20      # 距顶部 20px
+	# 位置：贴着**视口右边缘**、三个按钮正下方（1280 宽视口下即 x 1110..1270、y 126..）。
+	# 走「右边缘锚定」（anchor_left = anchor_right = 1.0 + 负 offset）而不是写死绝对 x，
+	# 这样界面缩放把逻辑视口缩小时它会跟着往里收，不会被裁到屏幕外。
+	panel.anchor_left = 1.0
+	panel.anchor_top = 0.0
+	panel.anchor_right = 1.0
+	panel.anchor_bottom = 0.0
+	panel.offset_left = -(STATUS_WIDTH + RIGHT_MARGIN)
+	panel.offset_right = -RIGHT_MARGIN
+	panel.offset_top = STATUS_TOP
 	# 高度**不写死**：状态栏有 4~5 行（核心电量行可有可无），
 	# 由 _update_status_panel_size() 按内容收；这里只钉住宽度。
-	panel.custom_minimum_size = Vector2(130, 0)
+	panel.custom_minimum_size = Vector2(STATUS_WIDTH, 0)
 
-	# 面板只是显示，不参与点击，否则左下角一片区域会挡住 3D 操作
+	# 面板只是显示，不参与点击，否则右列一片区域会挡住 3D 操作
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	panel.z_index = 100  # 确保在最上层
@@ -578,14 +655,14 @@ func _create_status_panel() -> void:
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.6)  # RGBA: 黑色60%透明
 	style.set_corner_radius_all(8)  # 圆角半径8像素
-	style.set_content_margin_all(12)  # 内边距12像素
+	style.set_content_margin_all(STATUS_PAD)
 	panel.add_theme_stylebox_override("panel", style)
 	
 	add_child(panel)
 	
 	# 创建垂直布局容器，使标签垂直排列
 	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 8)  # 标签间距8像素
+	vbox.add_theme_constant_override("separation", STATUS_ROW_SEP)
 	panel.add_child(vbox)
 	
 	# ----- 自身电量标签（占位或真实数值）-----
@@ -595,14 +672,14 @@ func _create_status_panel() -> void:
 	#   其余角色 → 灰暗占位 "⚡ --"（有核心行时整行隐藏，避免挂一个没意义的占位）
 	# 两块电池是分开的两行，核心那行见下方 _core_power_label。
 	_power_label = Label.new()
-	_power_label.add_theme_font_size_override("font_size", 18)  # 字体大小18
+	_power_label.add_theme_font_size_override("font_size", STATUS_FONT_SIZE)
 	vbox.add_child(_power_label)
 
 	# ----- 核心电量标签（没有核心时整行隐藏）-----
 	# 核心是独立单位，电量属于它自己：装上一枚核心就多出这一行，
 	# 拆下来这行就消失。它的可见性由 PlayerVitals._push_hud() 推过来。
 	_core_power_label = Label.new()
-	_core_power_label.add_theme_font_size_override("font_size", 18)
+	_core_power_label.add_theme_font_size_override("font_size", STATUS_FONT_SIZE)
 	_core_power_label.add_theme_color_override("font_color", CORE_ROW_COLOR)
 	vbox.add_child(_core_power_label)
 
@@ -611,58 +688,28 @@ func _create_status_panel() -> void:
 	# ----- 生命值标签 -----
 	_health_label = Label.new()
 	_health_label.text = "♥ %d/%d" % [current_health, max_health]
-	_health_label.add_theme_font_size_override("font_size", 18)
+	_health_label.add_theme_font_size_override("font_size", STATUS_FONT_SIZE)
 	vbox.add_child(_health_label)
 	
 	# ----- 体温标签 -----
 	_temperature_label = Label.new()
 	_temperature_label.text = "🌡 %d" % current_temperature
-	_temperature_label.add_theme_font_size_override("font_size", 18)
+	_temperature_label.add_theme_font_size_override("font_size", STATUS_FONT_SIZE)
 	vbox.add_child(_temperature_label)
 
 	# ----- 饱食度标签 -----
 	_hunger_label = Label.new()
 	_hunger_label.text = "🍖 %d" % current_hunger
-	_hunger_label.add_theme_font_size_override("font_size", 18)
+	_hunger_label.add_theme_font_size_override("font_size", STATUS_FONT_SIZE)
 	vbox.add_child(_hunger_label)
 
 	# 所有行都建好之后再统一刷一次：行数（有没有核心那行）决定面板高度，
 	# 早于最后一行调用 reset_size 会量到不完整的内容尺寸。
 	_refresh_status_rows()
 
-# ----------------------------------------
-# 操作提示相关
-# ----------------------------------------
-
-## 创建底部中央的操作提示文字
-## 显示格式：[空格] 互动  [F] 攻击  [Tab] 背包  [M] 地图
-func _create_control_hints() -> void:
-	_hints_label = Label.new()
-	_hints_label.name = "ControlHints"
-	_hints_label.text = "[空格] 互动  [F] 攻击  [Tab] 背包  [M] 地图"
-	
-	# 底部居中、紧贴快捷栏上方（大纲 5.1 要求）。
-	# 原先 anchor 全 0 且 offset 全 0，实际贴在屏幕最顶端，还和右上按钮抢位置。
-	# 快捷栏占距底 20~100px，这里放在 110~140px，正好在其上方。
-	_hints_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
-	_hints_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_hints_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_hints_label.offset_top = -140
-	_hints_label.offset_bottom = -110
-
-	# 对齐方式：水平和垂直都居中
-	_hints_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_hints_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-
-	_hints_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hints_label.z_index = 100
-	add_child(_hints_label)
-
-## 更新操作提示文字
-## @param hints 新的提示文本，例如："[E] 互动  [F] 攻击  [Tab] 背包"
-func update_control_hints(hints: String) -> void:
-	if _hints_label:
-		_hints_label.text = hints
+# 注：右下角（x 794..1270、y 648..700）原先有一行操作提示 Label（ControlHints），
+# 2026-09-24 按用户要求**删掉**——那条带子让给了装备栏（RECT_EQUIPMENT 现在用到 y=710）。
+# 按键说明改在暂停菜单 / 大纲.md 里查，HUD 上不再常驻提示文字。
 
 # ----------------------------------------
 # 昼夜时钟相关
@@ -689,75 +736,53 @@ func _update_clock() -> void:
 # 右上角按钮相关
 # ----------------------------------------
 
-## 右上角：小地图（常驻）+ 右侧按钮列（暂停、小地图开关）+ 小地图下方时钟
+## 右上角组合块的左半：小地图（常驻）+ 正下方时钟
 ##
-## 布局（界面草图）：
-##   [状态栏]                 [小地图] [暂停]
-##                            [小地图] [小地图开关]
-##                            [ 时间 ]
-## 整簇锚在右上角：锚点全设 1/0，用负的 offset 从右边缘往左量出簇的宽度，
-## 这样窗口缩放时它始终贴着右上角，不会像"锚点+固定像素坐标"那样跑偏。
+## 布局（2026-09-24 二次改版，用户要求"整体放到屏幕右上角"）：
+##   [小地图]  [ 暂停 / 大地图 / 小地图开关 ]   ← 按钮列（x 1110..1270）
+##   [ 时间 ]  [       状态栏               ]   ← 见 _create_status_panel
+##
+## 小地图列**紧贴按钮列的左侧**（按钮列自己贴视口右边缘）：
+##   右边缘 = 按钮列左边缘 1110 − BLOCK_GAP(8) = 1102
+##   左边缘 = 1102 − 212（MinimapUI.panel_width）= 890
+## 列底 = MARGIN(10) + 232 + 4 + 28 = CLUSTER_BOTTOM(274)，
+## 装备栏为了避让这一列，顶部下移到 370（右列现在可以一路用到 710）。
+## ⚠ 这一列也必须**跟着按钮列一起贴右边缘**（anchor_left = anchor_right = 1.0），
+## 否则界面缩放把视口缩小时按钮列左移、小地图却钉在原地，两者会叠在一起。
 func _create_topright_cluster() -> void:
 	var map_w := MinimapUI.panel_width()
 	var map_h := MinimapUI.panel_height()
-	var btn_w := 100.0
-	var sep := 8.0
-	var margin := 20.0
-	var clock_h := 26.0
-	var cluster_w := map_w + sep + btn_w
+	var sep := 4.0
+	var clock_h := 28.0
+	# 小地图列贴住按钮列的左侧（按钮列自己贴视口右边缘，见 _create_button_column）
+	var map_offset_right: float = -(BTN_W + BLOCK_GAP + RIGHT_MARGIN)
 
-	_topright = VBoxContainer.new()
-	_topright.name = "TopRightCluster"
-	_topright.anchor_left = 1.0
-	_topright.anchor_right = 1.0
-	_topright.anchor_top = 0.0
-	_topright.anchor_bottom = 0.0
-	_topright.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_topright.grow_vertical = Control.GROW_DIRECTION_END
-	_topright.offset_left = -(cluster_w + margin)
-	_topright.offset_right = -margin
-	_topright.offset_top = margin
-	_topright.offset_bottom = margin + map_h + sep + clock_h
-	_topright.add_theme_constant_override("separation", int(sep))
+	var map_col := VBoxContainer.new()
+	map_col.name = "TopRightMap"
+	map_col.anchor_left = 1.0
+	map_col.anchor_top = 0.0
+	map_col.anchor_right = 1.0
+	map_col.anchor_bottom = 0.0
+	map_col.offset_left = map_offset_right - map_w
+	map_col.offset_right = map_offset_right
+	map_col.offset_top = MARGIN
+	map_col.offset_bottom = MARGIN + map_h + sep + clock_h
+	map_col.add_theme_constant_override("separation", int(sep))
 	# 容器本身不收鼠标：空白处照样能点到 3D 世界，只有按钮自己收点击
-	_topright.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_topright.z_index = 100
-	add_child(_topright)
+	map_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_col.z_index = 100
+	add_child(map_col)
 
-	# --- 第一行：小地图 + 右侧按钮列 ---
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", int(sep))
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_topright.add_child(row)
-
-	# 固定占位：小地图隐藏时它仍占同样尺寸，按钮不会左右跳
+	# 固定占位：小地图隐藏时它仍占同样尺寸，时钟不会上下跳
 	_map_slot = Control.new()
 	_map_slot.name = "MapSlot"
 	_map_slot.custom_minimum_size = Vector2(map_w, map_h)
-	row.add_child(_map_slot)
+	map_col.add_child(_map_slot)
 
 	_minimap = MinimapUI.new()
 	_minimap.name = "Minimap"
 	_map_slot.add_child(_minimap)
 
-	var btns := VBoxContainer.new()
-	btns.add_theme_constant_override("separation", 6)
-	btns.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(btns)
-
-	_menu_button = _create_button("暂停", btn_w)
-	_menu_button.pressed.connect(_on_menu_button_pressed)
-	btns.add_child(_menu_button)
-
-	_bigmap_button = _create_button("大地图", btn_w)
-	_bigmap_button.pressed.connect(_on_bigmap_button_pressed)
-	btns.add_child(_bigmap_button)
-
-	_minimap_button = _create_button("小地图", btn_w)
-	_minimap_button.pressed.connect(_on_minimap_button_pressed)
-	btns.add_child(_minimap_button)
-
-	# --- 第二行：时钟（贴在小地图正下方）---
 	_clock_label = Label.new()
 	_clock_label.name = "DayClock"
 	_clock_label.text = ""
@@ -770,7 +795,42 @@ func _create_topright_cluster() -> void:
 	_clock_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	_clock_label.add_theme_constant_override("outline_size", 4)
 	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_topright.add_child(_clock_label)
+	map_col.add_child(_clock_label)
+
+	_create_button_column()
+
+
+## 右上角组合块的右半：暂停 / 大地图 / 小地图开关竖排，**贴着视口右边缘**
+## （1280 宽视口下即 x 1110..1270）
+## 状态栏接在这三个按钮正下方（见 _create_status_panel；y 起点即 STATUS_TOP）。
+func _create_button_column() -> void:
+	_topright = VBoxContainer.new()
+	_topright.name = "TopRightButtons"
+	# 右边缘锚定：视口被界面缩放缩小时跟着往里收，不会被裁
+	_topright.anchor_left = 1.0
+	_topright.anchor_top = 0.0
+	_topright.anchor_right = 1.0
+	_topright.anchor_bottom = 0.0
+	_topright.offset_left = -(BTN_W + RIGHT_MARGIN)
+	_topright.offset_right = -RIGHT_MARGIN
+	_topright.offset_top = MARGIN
+	_topright.offset_bottom = BTN_COL_BOTTOM
+	_topright.add_theme_constant_override("separation", int(BTN_SEP))
+	_topright.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_topright.z_index = 100
+	add_child(_topright)
+
+	_menu_button = _create_button("暂停", BTN_W)
+	_menu_button.pressed.connect(_on_menu_button_pressed)
+	_topright.add_child(_menu_button)
+
+	_bigmap_button = _create_button("大地图", BTN_W)
+	_bigmap_button.pressed.connect(_on_bigmap_button_pressed)
+	_topright.add_child(_bigmap_button)
+
+	_minimap_button = _create_button("小地图", BTN_W)
+	_minimap_button.pressed.connect(_on_minimap_button_pressed)
+	_topright.add_child(_minimap_button)
 
 	_update_minimap_button_text()
 
@@ -781,7 +841,7 @@ func _create_topright_cluster() -> void:
 func _create_button(text: String, width: float = 90.0) -> Button:
 	var btn = Button.new()
 	btn.text = text
-	btn.custom_minimum_size = Vector2(width, 32)  # 最小尺寸 宽x32
+	btn.custom_minimum_size = Vector2(width, BTN_H)  # 最小尺寸 宽x32（BTN_H）
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT   # 文字左对齐
 	# 关键：HUD 按钮绝不参与键盘聚焦。
 	# Button 默认 focus_mode = FOCUS_ALL，而窗口一获得焦点 Godot 就会自动聚焦
@@ -887,11 +947,16 @@ func _create_toast() -> void:
 	_toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast_label.custom_minimum_size = Vector2(0, 26)
 
-	_toast_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM, false)
-	_toast_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_toast_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_toast_label.offset_top = -118
-	_toast_label.offset_bottom = -92
+	# 九宫格里屏幕正下方已经被信息面板和快捷栏占满，吐司挪到**中列的空档**：
+	# x 510..786、y 556..582（小地图/时钟之下、快捷栏之上，这一段没有面板）。
+	_toast_label.anchor_left = 0.0
+	_toast_label.anchor_top = 0.0
+	_toast_label.anchor_right = 0.0
+	_toast_label.anchor_bottom = 0.0
+	_toast_label.offset_left = MAP_COL_LEFT
+	_toast_label.offset_right = MAP_COL_RIGHT
+	_toast_label.offset_top = 556
+	_toast_label.offset_bottom = 582
 
 	_toast_label.z_index = 150
 	_toast_label.visible = false
@@ -960,10 +1025,14 @@ func _on_hotbar_slot_clicked(slot_index: int, button: int) -> void:
 ## 快捷栏槽位拖拽放下回调
 ## 快捷栏格与背包前 9 格是同一批数据；直接调 Inventory.move_item，
 ## 背包的信号会回头刷新快捷栏，无需手动同步。
-func _on_hotbar_slot_dropped(from_slot: int, to_slot: int) -> void:
+## count > 0 时（Ctrl 拖拽）只搬这么多个，走 transfer_between 的拆堆路径。
+func _on_hotbar_slot_dropped(from_slot: int, to_slot: int, count: int) -> void:
 	if _inventory == null or from_slot == to_slot:
 		return
-	_inventory.move_item(from_slot, to_slot)
+	if count > 0:
+		Inventory.transfer_between(_inventory, from_slot, _inventory, to_slot, count)
+	else:
+		_inventory.move_item(from_slot, to_slot)
 
 ## 使用快捷栏指定槽位的物品
 ## 与 InventoryUI.use_item 同源：经 ItemEffects 施加 use_effect，成功则按 consume_on_use 扣 1。

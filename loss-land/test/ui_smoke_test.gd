@@ -101,13 +101,23 @@ func _run_checks() -> void:
 	_check(hotbar != null and is_equal_approx(hotbar.anchor_left, 0.5) and is_equal_approx(hotbar.anchor_top, 1.0),
 		"快捷栏锚定底部居中")
 
-	var panel = _hud.find_child("StatusPanel", true, false)
-	_check(panel != null and is_equal_approx(panel.anchor_top, 1.0),
-		"状态栏锚定左下（原为左上）")
+	var panel := _hud.find_child("StatusPanel", true, false) as Control
+	_check(panel != null and is_equal_approx(panel.anchor_left, 1.0) and is_equal_approx(panel.anchor_right, 1.0)
+		and is_equal_approx(panel.offset_right, -HUDUI.RIGHT_MARGIN) and is_equal_approx(panel.offset_top, 126.0),
+		"状态栏右边缘锚定视口、在按钮列正下方（界面缩放把视口缩小时会跟着往里收）",
+		("anchor=(%s,%s) offset=(%s,%s..%s)" % [panel.anchor_left, panel.anchor_top,
+			panel.offset_left, panel.offset_top, panel.offset_right]) if panel != null else "找不到 StatusPanel")
 
-	var hints = _hud.find_child("ControlHints", true, false)
-	_check(hints != null and is_equal_approx(hints.anchor_top, 1.0) and hints.offset_top == -140,
-		"按键提示在底部、快捷栏上方（原为顶部）")
+	# 同一条规则也管按钮列 / 小地图列 —— 视口缩小时三者必须一起往里收，否则会互相叠住
+	var btn_col := _hud.find_child("TopRightButtons", true, false) as Control
+	_check(btn_col != null and is_equal_approx(btn_col.anchor_left, 1.0)
+		and is_equal_approx(btn_col.offset_right, -HUDUI.RIGHT_MARGIN),
+		"按钮列右边缘锚定视口（不再写死绝对 x）")
+
+	# 右下角那行常驻操作提示 2026-09-24 按用户要求删掉了（把那条带子让给装备栏），
+	# 这里反向断言一下，防止以后有人"顺手补回来"又压住装备栏。
+	_check(_hud.find_child("ControlHints", true, false) == null,
+		"右下角操作提示已删除（原常驻 HUD）")
 
 	# ---------- 4. 快捷栏选中 ----------
 	print("[4] 快捷栏选中")
@@ -131,29 +141,40 @@ func _run_checks() -> void:
 	_hud._toggle_inventory()
 	_check(not UIManager.is_open(UIManager.INVENTORY_PANEL), "再次触发可关闭背包")
 
-	# ---------- 5b. 窗口类面板互斥 ----------
-	# 用户 2026-09-12 反馈：开着一个面板再按另一个的快捷键，会同时冒出多个面板。
-	# 规则：背包/合成/装备/储物箱同一时刻只允许开一个；全屏覆盖类（大地图等）
-	# 打开时收掉所有窗口类面板。
-	print("[5b] 窗口类面板互斥")
+	# ---------- 5b. 布局面板：各占固定区域，可同刻全开 ----------
+	# 用户 2026-09-23 改规则：屏幕改成九宫格，背包 / 箱子 / 制作栏 / 装备栏
+	# 各占一块固定地方，**互不遮挡、允许同时开着**（旧规则是"同刻只开一个"）。
+	# 唯一保留的收束：全屏覆盖类（大地图等）打开时收掉全部布局面板。
+	print("[5b] 布局面板可同刻全开")
 	UIManager.close_all()
 	_hud._toggle_inventory()
+	_check(UIManager.is_open(UIManager.INVENTORY_PANEL), "打开背包")
 	_hud._toggle_crafting()
-	_check(UIManager.is_open(UIManager.CRAFTING_PANEL) and not UIManager.is_open(UIManager.INVENTORY_PANEL),
-		"开合成会自动收起背包（不同时显示）")
+	_check(UIManager.is_open(UIManager.CRAFTING_PANEL) and UIManager.is_open(UIManager.INVENTORY_PANEL),
+		"开合成后背包仍开着（布局面板之间不再互斥）")
 	_hud._toggle_equipment()
-	_check(UIManager.is_open(UIManager.EQUIPMENT_PANEL) and not UIManager.is_open(UIManager.CRAFTING_PANEL),
-		"开装备会自动收起合成")
-	var inv_hidden := UIManager.get_panel(UIManager.INVENTORY_PANEL)
-	_check(inv_hidden != null and not inv_hidden.visible,
-		"被收起的面板确实隐藏了（不只是从栈里摘掉）")
-	_hud._toggle_equipment()
-	_check(not UIManager.is_open(UIManager.EQUIPMENT_PANEL), "再按一次关掉当前面板")
-	# 全屏覆盖类：打开大地图会收掉窗口类面板（否则关掉地图会"凭空冒出背包"）
+	_check(UIManager.is_open(UIManager.EQUIPMENT_PANEL) and UIManager.is_open(UIManager.CRAFTING_PANEL),
+		"开装备后合成仍开着")
+	UIManager.open_panel(UIManager.STORAGE_PANEL)
+	_check(UIManager.is_open(UIManager.STORAGE_PANEL) and UIManager.is_open(UIManager.INVENTORY_PANEL),
+		"箱子与背包同刻开着（互拖的前提）")
+	var co_open := 0
+	for pn in UIManager.LAYOUT_PANELS:
+		if UIManager.is_open(pn):
+			co_open += 1
+	_check(co_open == UIManager.LAYOUT_PANELS.size(), "四块布局面板同刻全部开着", "实际 %d 块" % co_open)
 	_hud._toggle_inventory()
+	_check(not UIManager.is_open(UIManager.INVENTORY_PANEL), "再按一次只关掉背包自己")
+	_check(UIManager.is_open(UIManager.CRAFTING_PANEL) and UIManager.is_open(UIManager.EQUIPMENT_PANEL)
+		and UIManager.is_open(UIManager.STORAGE_PANEL), "其余三块不受影响，依然开着")
+	# 全屏覆盖类：打开大地图会收掉全部布局面板（否则关掉地图会"凭空冒出背包"）
 	_hud._toggle_big_map()
-	_check(UIManager.is_open(UIManager.BIGMAP_PANEL) and not UIManager.is_open(UIManager.INVENTORY_PANEL),
-		"打开大地图会收起背包")
+	_check(UIManager.is_open(UIManager.BIGMAP_PANEL), "打开大地图")
+	var layout_left := 0
+	for pn in UIManager.LAYOUT_PANELS:
+		if UIManager.is_open(pn):
+			layout_left += 1
+	_check(layout_left == 0, "打开大地图会收掉全部布局面板", "残留 %d 块" % layout_left)
 	_check(paused, "大地图仍是模态：暂停游戏")
 	UIManager.close_all()
 	_check(not paused, "全部关闭后游戏恢复运行")

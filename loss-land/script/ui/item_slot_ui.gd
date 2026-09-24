@@ -40,12 +40,13 @@ signal drag_started(slot_index: int)
 signal drag_ended(slot_index: int)
 
 # 拖拽放下信号：把 from_slot 的物品放到本槽（= to_slot）
+# count < 0 = 整堆；> 0 = 只搬这么多个（拖拽时按住 Ctrl）
 # 由 InventoryUI 接收并调用 inventory.move_item(from, to)
-signal item_dropped(from_slot: int, to_slot: int)
+signal item_dropped(from_slot: int, to_slot: int, count: int)
 
 # 跨面板拖拽放下信号：source 是拖拽来源面板的标识（见 source_id）
 # 由接收方面板转调两个 Inventory（如 箱子 ↔ 背包 的整堆搬运/合并/交换）
-signal cross_dropped(source: String, from_slot: int, to_slot: int)
+signal cross_dropped(source: String, from_slot: int, to_slot: int, count: int)
 
 # ============================================
 # 导出变量
@@ -78,6 +79,16 @@ var _quantity_label: Label
 
 # 是否正在被拖拽（本槽作为源）
 var _is_dragging: bool = false
+
+# 本次"按下 → 松手"之间有没有真的拖起来过。
+# 为什么不能直接用 _is_dragging 判断：拖拽结束时引擎先发 NOTIFICATION_DRAG_END
+# （那里会把 _is_dragging 清掉），之后若还收到鼠标松开事件，就分不清
+# "点了一下"和"拖了一次又松手"。这个标志只在**下一次按下**时才复位，判定可靠。
+var _press_dragged: bool = false
+
+# 带修饰键按下时暂存的按键（-1 = 没有待判定事件）。
+# 见 _gui_input 里的说明：Ctrl / Shift + 左键要等松手才能确定是"点击"还是"拖拽"。
+var _pending_click_button: int = -1
 
 # 是否被悬停
 var _is_hovered: bool = false
@@ -117,17 +128,17 @@ func _ready() -> void:
 # 创建子节点
 # ----------------------------------------
 func _setup_ui() -> void:
-	# 设置最小尺寸
-	custom_minimum_size = Vector2(64, 64)
+	# 设置最小尺寸（2026-09-24 缩小：64→52。背包/箱子面板会按自己的 slot_size 覆盖）
+	custom_minimum_size = Vector2(52, 52)
 
 	# 创建图标容器
 	var margin = MarginContainer.new()
 	margin.name = "MarginContainer"
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_theme_constant_override("margin_left", 4)
-	margin.add_theme_constant_override("margin_right", 4)
-	margin.add_theme_constant_override("margin_top", 4)
-	margin.add_theme_constant_override("margin_bottom", 4)
+	margin.add_theme_constant_override("margin_left", 3)
+	margin.add_theme_constant_override("margin_right", 3)
+	margin.add_theme_constant_override("margin_top", 3)
+	margin.add_theme_constant_override("margin_bottom", 3)
 	add_child(margin)
 
 	# 创建图标
@@ -146,7 +157,7 @@ func _setup_ui() -> void:
 	_quantity_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_quantity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_quantity_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	_quantity_label.add_theme_font_size_override("font_size", 14)
+	_quantity_label.add_theme_font_size_override("font_size", 12)
 	_quantity_label.add_theme_color_override("font_color", Color.WHITE)
 	_quantity_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_quantity_label.add_theme_constant_override("outline_size", 2)
@@ -290,10 +301,26 @@ func _gui_input(event: InputEvent) -> void:
 			_update_style()
 			hovered.emit(slot_index)
 
-	# 鼠标点击（按下即发；移动交给原生拖放处理）
+	# 鼠标点击
 	if event is InputEventMouseButton:
 		if event.pressed:
-			clicked.emit(slot_index, event.button_index)
+			_press_dragged = false
+			# 先清掉上一次可能残留的待判定按键（比如上次拖拽取消、松手事件没送到本槽），
+			# 否则这次松开时会把那个旧值当成"待判定"，凭空触发一次 clicked。
+			_pending_click_button = -1
+			# 带修饰键（Ctrl / Shift）时**不能**"按下就响应"：
+			# 这两个键表示"少量搬运 / 快速搬运"，玩家很可能按着它顺手拖——
+			# 若按下瞬间就把整堆搬走了，拖拽就没得拖（2026-09-23 前的实际冲突：
+			# 箱子侧 Ctrl+左键按下即"取半"，玩家想 Ctrl 拖 1 个根本拖不动）。
+			# 所以：有修饰键 → 先记下按键，等松手时若没发生过拖拽才发 clicked。
+			if Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_SHIFT):
+				_pending_click_button = event.button_index
+			else:
+				clicked.emit(slot_index, event.button_index)
+		else:
+			if _pending_click_button >= 0 and not _press_dragged:
+				clicked.emit(slot_index, _pending_click_button)
+			_pending_click_button = -1
 
 # ----------------------------------------
 # 鼠标进入/离开、拖放结束检测
@@ -332,10 +359,15 @@ func _get_drag_data(_at_position: Vector2) -> Variant:
 	if _item == null or _item.data == null or _item.is_empty():
 		return null
 
-	set_drag_preview(_build_drag_preview())
+	# 按住 Ctrl = 只搬 1 个（< 0 = 整堆）。
+	# 数量随拖拽数据一起走，由落点那边决定搬几个——而不是"拖起来就整格搬走"。
+	var count: int = 1 if Input.is_key_pressed(KEY_CTRL) else -1
+
+	set_drag_preview(_build_drag_preview(count))
 	_is_dragging = true
+	_press_dragged = true
 	drag_started.emit(slot_index)
-	return {"from_slot": slot_index, "source": source_id}
+	return {"from_slot": slot_index, "source": source_id, "count": count}
 
 # ----------------------------------------
 # 能否放下：鼠标拖到本槽上方时调用
@@ -374,10 +406,11 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		return
 	var from_slot := int(dict["from_slot"])
 	var src := String(dict.get("source", ""))
+	var count: int = int(dict.get("count", -1))
 	if src == source_id:
-		item_dropped.emit(from_slot, slot_index)
+		item_dropped.emit(from_slot, slot_index, count)
 	else:
-		cross_dropped.emit(src, from_slot, slot_index)
+		cross_dropped.emit(src, from_slot, slot_index, count)
 
 # ----------------------------------------
 # 设置落点高亮（供其它槽位跨实例调用）
@@ -400,8 +433,11 @@ func _clear_drop_state() -> void:
 # ----------------------------------------
 # 构建拖拽预览
 # 一个小方块：物品图标 + 数量，跟随鼠标（由引擎托管）
+#
+# 参数：count - < 0 = 整堆（显示物品总数量）；> 0 = 只搬这么多个（显示该数量 + 青色）
+# 数量跟着鼠标显示，玩家一眼就知道"这一下会搬走几个"，不用去记修饰键的规则。
 # ----------------------------------------
-func _build_drag_preview() -> Control:
+func _build_drag_preview(count: int = -1) -> Control:
 	var box := PanelContainer.new()
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.15, 0.15, 0.15, 0.9)
@@ -409,7 +445,7 @@ func _build_drag_preview() -> Control:
 	style.set_border_width_all(2)
 	style.set_corner_radius_all(4)
 	box.add_theme_stylebox_override("panel", style)
-	box.custom_minimum_size = Vector2(48, 48)
+	box.custom_minimum_size = Vector2(40, 40)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var icon := TextureRect.new()
@@ -419,11 +455,14 @@ func _build_drag_preview() -> Control:
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(icon)
 
-	if _item.quantity > 1:
+	var show_qty: int = count if count > 0 else _item.quantity
+	if show_qty > 1:
 		var qty := Label.new()
-		qty.text = str(_item.quantity)
-		qty.add_theme_font_size_override("font_size", 12)
-		qty.add_theme_color_override("font_color", Color.WHITE)
+		qty.text = str(show_qty)
+		qty.add_theme_font_size_override("font_size", 11)
+		# 青色 = "只搬这么多"（Ctrl 拖拽），与整堆搬运的白色区分开
+		qty.add_theme_color_override("font_color",
+			Color(0.55, 0.95, 1.0) if count > 0 else Color.WHITE)
 		qty.add_theme_color_override("font_outline_color", Color.BLACK)
 		qty.add_theme_constant_override("outline_size", 2)
 		qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT

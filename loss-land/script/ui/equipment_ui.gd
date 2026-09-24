@@ -10,9 +10,13 @@
 #   背包可装备列表：当前背包里所有可装备物品，点击装备
 #
 # 与合成 UI / 背包 UI 保持一致的三个约定：
-#   1. 面板用「显式 anchor + 对称 offset」定位，不用 set_anchors_preset
+#   1. 面板用「显式 anchor + 绝对 offset」定位，不用 set_anchors_preset
+#      —— 本面板的 anchor 是**全 1.0**（右、下贴视口边缘），见 RECT_EQUIPMENT 注释
 #   2. 背包 / 装备组件都按 "player" 组查找，不依赖绝对路径
 #   3. z_index 抬高 + 根节点 MOUSE_FILTER_STOP，避免被 HUD 盖住、点击穿透到 3D
+#
+# 位置（2026-09-24 二次改版）：右列底部 420×340（1280×720 视口下 x 850..1270、y 370..710）。
+#   四个装备槽**均分内容宽**（不再写死 110px）：面板缩到 420 后，4×110 会溢出。
 #
 # 刷新时机：
 #   装备组件的 equipment_changed + 背包信号 + 面板每次变为可见时。
@@ -22,6 +26,18 @@ class_name EquipmentUI
 extends Control
 
 signal closed()
+
+## 设计视口尺寸（九宫格坐标都按它写）
+const DESIGN_SIZE := Vector2(1280.0, 720.0)
+
+## 面板区域（1280×720 设计空间）：右列底部。
+## ⚠ **右、下两侧锚在视口边缘**（anchor 全 1.0 + 负 offset ⇒ 1280×720 视口下
+## 正好落在 x 850..1270、y 380..710）。之所以贴边而不写死绝对坐标：
+## 界面缩放（GraphicsConfig.ui_scale → content_scale_factor）>1 时，
+## canvas_items + expand 会把逻辑视口缩小（1.05 ⇒ 1219×686），
+## 此时绝对坐标会被裁到屏幕外，贴边锚定则会跟着往里收。
+## 2026-09-24 二次改版：476×426 → 420×340（原尺寸在界面缩放 105% 下右/下都被裁）。
+const RECT_EQUIPMENT := Rect2(850, 370, 420, 340)
 
 # ============================================
 # 变量
@@ -123,15 +139,17 @@ func refresh() -> void:
 # ============================================
 
 func _setup_ui() -> void:
-	# 居中面板：显式锚点 + 对称偏移（不用 set_anchors_preset）
-	anchor_left = 0.5
-	anchor_top = 0.5
-	anchor_right = 0.5
-	anchor_bottom = 0.5
-	offset_left = -340
-	offset_top = -240
-	offset_right = 340
-	offset_bottom = 240
+	# 九宫格右列底部：**右、下贴视口边缘**（anchor 全 1.0 + 负 offset）。
+	# 用显式 anchor 数字而不是 set_anchors_preset —— 运行时 new() 的控件
+	# 在 _ready 里调它会按当前尺寸（0×0）重算 offset。
+	anchor_left = 1.0
+	anchor_top = 1.0
+	anchor_right = 1.0
+	anchor_bottom = 1.0
+	offset_left = RECT_EQUIPMENT.position.x - DESIGN_SIZE.x
+	offset_top = RECT_EQUIPMENT.position.y - DESIGN_SIZE.y
+	offset_right = RECT_EQUIPMENT.end.x - DESIGN_SIZE.x
+	offset_bottom = RECT_EQUIPMENT.end.y - DESIGN_SIZE.y
 
 	var background := PanelContainer.new()
 	background.name = "Background"
@@ -140,7 +158,7 @@ func _setup_ui() -> void:
 
 	var root_vbox := VBoxContainer.new()
 	root_vbox.name = "RootVBox"
-	root_vbox.add_theme_constant_override("separation", 6)
+	root_vbox.add_theme_constant_override("separation", 4)
 	background.add_child(root_vbox)
 
 	# --- 标题行 ---
@@ -149,12 +167,13 @@ func _setup_ui() -> void:
 
 	var title := Label.new()
 	title.text = "装备"
-	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_font_size_override("font_size", 18)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
 
 	var close_btn := Button.new()
 	close_btn.text = "关闭 (B)"
+	close_btn.focus_mode = Control.FOCUS_NONE
 	close_btn.pressed.connect(close)
 	title_row.add_child(close_btn)
 
@@ -167,17 +186,17 @@ func _setup_ui() -> void:
 
 	_stat_label = Label.new()
 	_stat_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_stat_label.custom_minimum_size = Vector2(300, 56)
+	_stat_label.custom_minimum_size = Vector2(240, 40)
 	stat_frame.add_child(_stat_label)
 
-	# --- 已装备槽位 ---
+	# --- 已装备槽位（四个横排，均分内容宽 → 面板 420 下每格约 94）---
 	var slot_title := Label.new()
 	slot_title.text = "已装备（点击卸下）"
 	slot_title.modulate = COLOR_HEAD
 	root_vbox.add_child(slot_title)
 
 	var slot_row := HBoxContainer.new()
-	slot_row.add_theme_constant_override("separation", 8)
+	slot_row.add_theme_constant_override("separation", 6)
 	root_vbox.add_child(slot_row)
 	_build_slots(slot_row)
 
@@ -190,7 +209,7 @@ func _setup_ui() -> void:
 	root_vbox.add_child(list_title)
 
 	var list_scroll := ScrollContainer.new()
-	list_scroll.custom_minimum_size = Vector2(0, 200)
+	list_scroll.custom_minimum_size = Vector2(0, 60)
 	list_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root_vbox.add_child(list_scroll)
 
@@ -209,23 +228,27 @@ func _make_dark_style() -> StyleBoxFlat:
 
 
 ## 构建装备槽位（武器/护甲/工具/核心）
+## 四个横排**均分面板内容宽**（`SIZE_EXPAND_FILL`，不写死宽度）——
+## 面板宽 420、内容宽约 396 ⇒ 每格 ≈ 94px（icon 24 + 名字）。
+## 以前写死 110 是因为面板固定 476；现在面板要随视口收窄，硬编码会溢出。
 func _build_slots(container: Node) -> void:
 	for slot in _SLOTS:
 		var box := VBoxContainer.new()
-		box.add_theme_constant_override("separation", 2)
-		box.custom_minimum_size = Vector2(190, 60)
+		box.add_theme_constant_override("separation", 1)
+		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		container.add_child(box)
 
 		var head := Label.new()
 		head.text = _slot_label_text(slot)
 		head.modulate = COLOR_DIM
+		head.add_theme_font_size_override("font_size", 12)
 		box.add_child(head)
 
 		var hbox := HBoxContainer.new()
 		box.add_child(hbox)
 
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(40, 40)
+		icon.custom_minimum_size = Vector2(24, 24)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		hbox.add_child(icon)
@@ -233,6 +256,7 @@ func _build_slots(container: Node) -> void:
 		var name := Label.new()
 		name.text = "（空）"
 		name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name.add_theme_font_size_override("font_size", 12)
 		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		hbox.add_child(name)
 
@@ -241,7 +265,8 @@ func _build_slots(container: Node) -> void:
 		click.text = ""
 		click.flat = true
 		click.mouse_filter = Control.MOUSE_FILTER_STOP
-		click.custom_minimum_size = Vector2(190, 60)
+		click.focus_mode = Control.FOCUS_NONE
+		click.custom_minimum_size = Vector2(0, 34)
 		click.pressed.connect(func() -> void: _on_slot_clicked(slot))
 		box.add_child(click)
 
