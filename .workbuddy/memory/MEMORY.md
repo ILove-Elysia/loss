@@ -4,7 +4,7 @@
 
 ## 一、改文件 / 改数据的铁律
 - `大纲.md`＝给人看的说明书：禁版本号/状态标记/代码名/字段名/待办/踩坑；未实装标「（规划中）」；改数值后回写。过程与接口契约 → 每日日志。
-- **改 .gd → `test/gd_static_lint.py`；改 .tres/.tscn → `test/check_data_refs.py`；最后实机。编辑器开着别跑 headless**（抢 `.godot`）。Godot **4.7.2**＝`E:\SteamLibrary\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe`；headless＝`godot --headless --path . --script res://test/<name>.gd`（**仓库根＝`E:\GameMake\loss`**）；从 Git Bash 跑先补 `APPDATA`，否则 `user://` 会落进项目内 `loss-land/Godot/`（`?? Godot/` 是日志、已 .gitignore，别提交）。
+- **改 .gd → `test/gd_static_lint.py`；改 .tres/.tscn → `test/check_data_refs.py`；最后实机。编辑器开着别跑 headless**（抢 `.godot`）。Godot **4.7.2**＝`E:\SteamLibrary\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe`；headless＝`godot --headless --path . --script res://test/<name>.gd`（**仓库根＝`E:\GameMake\loss`**）；从 Git Bash 跑先补 `APPDATA`，否则 `user://` 会落进项目内 `loss-land/Godot/`（`?? Godot/` 是日志、已 .gitignore，别提交）。**`--path` 只认 Windows 路径**，写 Git Bash 的 `/c/…` 会 `Invalid project path specified`。**想「编辑器开着也能 headless 验证」：把工程整个复制到临时目录、删掉副本里的 `.godot`（走全新导入，顺带模拟编辑器首扫）再 `--path` 指副本**，另设 `APPDATA` 隔离 `user://` —— 2026-09-25 实测 `--import` 1756 项 + 回归全绿，不与编辑器抢 `.godot`。
 - **lint 查不出「调用了未定义的方法」**（2026-09-24 BossBase 的 `_connect_player_signals` 事故）：`Function "X" not found in base self` **只在真实运行/headless 时才炸**。**改完 .gd 必跑一次 headless 入口**（`test/*.gd` 或实机），静态 7/7 通过 ≠ 能跑。
 - **改 `.gd` 的 `@export` 字段（尤其删字段）必须先关编辑器**：编辑器用"中间态脚本"重序列化 .tres，无声吞掉当时不存在的字段（2026-09-22：8 份 .tres 的 `resource_id` 被吞 ⇒ 场上无资源）；铁证＝被编辑器保存的 .tres 多出 `uid=`。**脚本改好 ≠ 数据还在，改完必跑 check_data_refs；它报的每条都要处理**，不许标"历史遗留/与本次无关"跳过。
 - **移出 .tscn/.tres 前先在编辑器关掉它的标签页**：编辑器发现文件被外部删除会把内存场景重新落盘（已 3 次）。标签页在 `.godot/editor/editor_layout.cfg`、每次启动恢复 ⇒ 必须「关标签页 + 重启」。
@@ -21,6 +21,7 @@
 ## 三、运行时取证与排查
 - 日志 `%APPDATA%\Godot\app_userdata\loss_land\logs\`（`godot.log` 是当次，历史按时间戳）；分类开关同目录 `debug_config.cfg`（**默认 resource=false**，排查采集/生成先改 true）。存档 `saves/slot_N.json` 可 Python 直读。
 - **高频根因（先查这 6 个）**：绑定缺失 / 缓存未重扫 / 集合被清空 / queue_free 延迟 / 控件 0×0 / 先设位置后入树。
+- **报一串 `Could not parse global class "X" from "res://…"` 时，先 `git status` / `git diff`，别急着怀疑类缓存**（2026-09-25：`boss_base.gd` 第 403 行被误敲进一个 `1` ⇒ BossBase 解析失败 ⇒ 所有 `extends BossBase`／`: BossBase` 的脚本连带报错，共 33 条）。**编辑器脚本自动保存（默认 10 s）会把误击键静默落盘**，所以「我没改过」不成立；`git diff` 为空＝与已验证版本逐字节一致，是最快的证伪与修复确认手段。
 - 运行时 `new` 的控件**禁用 `set_anchors_preset`**（0×0 悬停不到且点击穿透到 3D）→ 显式 size/position；居中用 CenterContainer；autowrap Label 给确定正宽度；F5 内嵌运行不可用 → 独立窗口。
 - 工具链顺序：`fix_import_paths.py` → `check_data_refs.py` → `find_orphans.py`（**孤岛 ≠ 可删**）→ `gd_static_lint.py` → 实机。二进制 `.res` 内字符串 grep 不到且带长度前缀 ⇒ 改路径长度会损坏，只能编辑器拖拽更新；**引用者自身可能是死的**；绝不 `cat` 大 .tres。
 - **判断"某物品是否可得"的唯一权威＝`script/crafting/crafting_system.gd` 配方表 + 掉落/初始背包**，不是 `items/data/*.tres`——遗留 .tres 会长期挂 `item_registry.tres` 且被测试当夹具，看着像活的实为死数据。**加档位/写进说明书前先查配方表**。
