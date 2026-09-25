@@ -8,23 +8,26 @@
 #      Boss 混在正式地图里会被到处掉包，测不准（这也是 Boss 另立 "boss" 组的理由）；
 #   3. 正式地图上的巢穴位置/沙地战场还没做（规格第 4 步）。
 #
-# 场景内容：一块平地 + 玩家 + 巢穴标记 + 触发圈/脱战圈 + 状态调试面板。
-# 触发圈/脱战圈的**半径不是写死的**：运行时按沙虫 @export 的
+# 场景内容：一块平地 + 玩家 + 巢穴标记 + 触发圈/领地圈 + 状态调试面板。
+# 两个圈的**半径都不是写死的**：运行时按沙虫 @export 的
 # trigger_radius / leash_radius 现建环形，改数值圈子跟着变，不会对不上。
 # 地面大小同样不写死：半边长 = leash_radius + extra_runway。
-# ⚠ 脱战判定量的是**玩家↔沙虫**（BossBase._check_leash → player_distance()），
-#   不是玩家↔巢穴；而沙虫 chase_speed=4.0、玩家 5.0 m/s（饿了 / 低电还要再乘
-#   0.9 / 0.7）—— 每秒只拉开 1 m 上下。想靠两条腿把 34 m 的脱战线跑出来，
-#   得笔直跑 30 s 以上（约 170 m）；旧场地 90x90 半边长才 45 m，跑两步就撞墙
-#   被贴脸，这条分支根本测不了。所以这里做两件事：
-#     ① 场地放大到 半边长 = 脱战线 + 150 m 跑道；
-#     ② 脱战圈改成**跟着沙虫跑**，你才能看见判定真正量的是哪一段距离。
+#
+# ⚠ 两个圈**同心**，圆心都是巢穴：
+#     触发圈（trigger_radius）＝ 玩家进圈并停留 trigger_dwell → 沙虫钻出；
+#     领地圈（leash_radius）  ＝ 玩家出圈并持续 leash_time → 沙虫回巢回满血。
+#   领地判定的基准是「玩家↔巢穴」，**不是「玩家↔沙虫」**（BossBase._check_leash）。
+#   2026-09-25 之前量的是玩家↔沙虫，而脱战要求"拉开 leash_radius 的差距"，
+#   速度差却只有 1 m/s（玩家 5.0 vs 沙虫 4.0；低电时沙虫还更快）⇒ 得笔直跑
+#   30 秒以上，"逃不掉"就是这么来的。改成量巢穴距离后与速度差无关，跑十来米就脱身。
+#   另外沙虫在追击/出招期间会被 `_clamped_move_dir()` 拴在领地圈里（回家路径不受限），
+#   它会追到圈边就停住并横向跟随 —— 你站在圈外能直接看到"它守在那儿"。
 #
 # 运行方式：在编辑器里打开本场景，按 F6（**不要**按 F5，F5 进的是正式地图）。
 #
 # 按键：
 #   T  把玩家挪到触发圈内  → 停留 trigger_dwell 后沙虫钻出
-#   H  把玩家挪到脱战圈外  → 持续 leash_time 后沙虫回巢回满血
+#   H  把玩家挪到领地圈外  → 持续 leash_time 后沙虫回巢回满血
 #   K  打死玩家            → 沙虫应**立刻**回巢回满血（不许守尸）
 #   W  直接唤起沙虫（跳过"靠近停留"，方便反复测招式）
 #   1  沙虫血量降到 60%    → 下一决策点仍用表 1
@@ -43,9 +46,10 @@ extends Node3D
 @export var leash_ring_color: Color = Color(1.0, 0.32, 0.18)
 ## 玩家被挪动时统一落到这个高度（让重力把他放回地面）
 @export var drop_height: float = 1.5
-## 脱战圈之外还要留多少米跑道（地面半边长 = leash_radius + 本值）。
-## 150 m 是按「玩家满速笔直跑」倒推的：要拉出 34 m 差距得跑 170 m 上下。
-@export var extra_runway: float = 150.0
+## 领地圈之外还要留多少米跑道（地面半边长 = leash_radius + 本值）。
+## 脱战改成量「玩家↔巢穴」之后就不需要长跑道了：出圈 24 m + 十几米余量足够看清
+## "沙虫停在圈边"这件事，所以从 150 收到 60（场地 168×168，不再是一望无际）。
+@export var extra_runway: float = 60.0
 
 @export_group("调试")
 ## 让沙虫把自己的状态迁移打进日志（每秒一行 + 每次迁移一行）
@@ -70,7 +74,6 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	_update_leash_ring_position()
 	if _label == null:
 		return
 	_label.text = "\n".join(_panel_lines())
@@ -168,7 +171,8 @@ func _damage_boss_to_blood_1() -> void:
 # 玩家
 # ============================================
 
-## near = true 挪到触发圈内；false 挪到脱战圈外
+## near = true 挪到触发圈内；false 挪到领地圈外。
+## 两个圈的圆心**都是巢穴**，所以只需要换半径、不用换锚点。
 func _move_player_near(near: bool) -> void:
 	if _boss == null or not is_instance_valid(_boss):
 		_note("还没有沙虫")
@@ -177,21 +181,18 @@ func _move_player_near(near: bool) -> void:
 	if body == null:
 		_note("找不到玩家")
 		return
-	var radius: float = _boss.trigger_radius * 0.5
 	var anchor: Vector3 = _boss.home_position()
+	var radius: float = _boss.trigger_radius * 0.5
 	if not near:
-		# ⚠ 脱战判定量的是**玩家↔沙虫**，不是玩家↔巢穴。
-		#   所以出圈必须以**沙虫当前位置**为基准；而且余量要够：
-		#   你站着不动时沙虫仍以 4 m/s 逼近，4 s 会吃掉 16 m ——
-		#   只给 8~12 m 余量，计时没走满就又落回圈内，看着像「脱战失灵」。
-		anchor = _boss.global_position
-		radius = _boss.leash_radius + 30.0
+		# 领地判定量的就是「玩家↔巢穴」，所以出圈以**巢穴**为基准。
+		# 余量 12 m：稳稳出圈，又不会一按就贴到墙上（地面半边长 = 领地 + 60）。
+		radius = _boss.leash_radius + 12.0
 	body.global_position = Vector3(anchor.x + radius, drop_height, anchor.z)
 	if near:
 		_note("玩家 → 距巢穴 %.1f m（触发圈 %.1f m 内，等 %.1f s 沙虫登场）"
 			% [radius, _boss.trigger_radius, _boss.trigger_dwell])
 	else:
-		_note("玩家 → 距沙虫 %.1f m（脱战线 %.1f m 外，站住别动，等 %.1f s 沙虫回巢）"
+		_note("玩家 → 距巢穴 %.1f m（领地圈 %.1f m 外，站住别动，等 %.1f s 沙虫回巢）"
 			% [radius, _boss.leash_radius, _boss.leash_time])
 
 
@@ -227,9 +228,9 @@ func _reset_all() -> void:
 	_note("已重置：世界旗标清空、沙虫重生、场地按当前数值重铺")
 
 
-## 地面半边长 = 脱战圈 + 跑道（有下限 45 m，免得数值调小了场地变成一块豆腐干）
+## 地面半边长 = 领地圈 + 跑道（有下限 45 m，免得数值调小了场地变成一块豆腐干）
 func _ground_half_extent() -> float:
-	var leash: float = 34.0
+	var leash: float = 24.0
 	if _boss != null and is_instance_valid(_boss):
 		leash = _boss.leash_radius
 	return maxf(leash + extra_runway, 45.0)
@@ -263,7 +264,7 @@ func _fit_ground() -> void:
 		shape_node.position = offset
 
 
-## 玩家（Physics 子节点）到巢穴的平面距离（只作参考，**不是**脱战判据）
+## 玩家（Physics 子节点）到巢穴的平面距离 —— **这就是领地（脱战）判据**
 func _player_distance_to_nest() -> float:
 	if _boss == null:
 		return 0.0
@@ -273,7 +274,7 @@ func _player_distance_to_nest() -> float:
 	return _flat_distance(body.global_position, _boss.home_position())
 
 
-## 玩家↔沙虫的平面距离 —— **这才是脱战判据**（BossBase._check_leash 用的就是它）
+## 玩家↔沙虫的平面距离（判断招式够不够得着用，**不是**脱战判据）
 func _player_distance_to_boss() -> float:
 	if _boss == null or not is_instance_valid(_boss):
 		return 0.0
@@ -283,36 +284,22 @@ func _player_distance_to_boss() -> float:
 	return _flat_distance(body.global_position, _boss.global_position)
 
 
-## 脱战圈跟着沙虫的平面位置走（y 压回地面）
-func _update_leash_ring_position() -> void:
-	if _leash_ring == null or not is_instance_valid(_leash_ring):
-		return
-	if _boss == null or not is_instance_valid(_boss):
-		return
-	_leash_ring.global_position = Vector3(_boss.global_position.x, 0.06, _boss.global_position.z)
-
-
-## 触发圈 / 脱战圈：半径**从沙虫的 @export 现取**，改数值圈子立刻跟着变。
-## 触发圈挂在巢穴上（待机时沙虫就蹲在巢穴里 ⇒ 以巢穴为圆心是对的）；
-## 脱战圈**必须跟着沙虫跑** —— 判定量的是玩家↔沙虫，圈要是钉在巢穴上，
-## 你会以为自己已经站在圈外、判定却还在圈内，「逃不掉」的错觉多半来自这里。
+## 触发圈 / 领地圈：半径**从沙虫的 @export 现取**，改数值圈子立刻跟着变。
+## 两个圈的圆心**都是巢穴**：触发是"靠近巢穴"，脱战是"离开领地"，基准同一个点，
+## 于是场上一对同心圆 —— 玩家站在哪一层，一眼就看得出。
 func _build_rings() -> void:
 	if _nest == null or _boss == null:
 		return
 	for child in _nest.get_children():
-		if child is MeshInstance3D and child.name == "TriggerRing":
+		if child is MeshInstance3D and (child.name == "TriggerRing" or child.name == "LeashRing"):
 			child.queue_free()
-	if _leash_ring != null and is_instance_valid(_leash_ring):
-		_leash_ring.queue_free()
-	_leash_ring = null
 	var trigger_ring: MeshInstance3D = _make_ring(_boss.trigger_radius, trigger_ring_color, "TriggerRing")
 	_nest.add_child(trigger_ring)
 	_leash_ring = _make_ring(_boss.leash_radius, leash_ring_color, "LeashRing")
-	add_child(_leash_ring)
-	_update_leash_ring_position()
+	_nest.add_child(_leash_ring)
 
 
-## 造环但**不入树**：由调用方决定挂给谁（触发圈挂巢穴、脱战圈挂场地根）
+## 造环但**不入树**：由调用方决定挂给谁（当前两个圈都挂巢穴，见 _build_rings）
 func _make_ring(radius: float, color: Color, ring_name: String) -> MeshInstance3D:
 	# TorusMesh 的环心半径 = (inner + outer) / 2，管粗 = (outer - inner) / 2
 	var torus: TorusMesh = TorusMesh.new()
@@ -341,7 +328,7 @@ func _panel_lines() -> Array[String]:
 		lines.append("沙虫：未生成（按 R 重置）")
 	else:
 		lines.append("沙虫 " + _boss.debug_line())
-		lines.append("触发 %.1f m / 停留 %.1f s      脱战 %.1f m / %.1f s" % [
+		lines.append("触发 %.1f m / 停留 %.1f s      领地 %.1f m / 停留 %.1f s" % [
 			_boss.trigger_radius, _boss.trigger_dwell,
 			_boss.leash_radius, _boss.leash_time,
 		])
@@ -352,11 +339,15 @@ func _panel_lines() -> Array[String]:
 		if WorldState.get_flag(Sandworm.NEST_FLAG, 0) == 1:
 			nest_label = "已坍塌"
 		lines.append("当前相位 %s      巢穴 %s" % [table_label, nest_label])
-		lines.append("场地半边长 %.0f m      玩家↔沙虫 %.1f m（脱战线 %.1f m，%s）" % [
+		var to_home: float = _player_distance_to_nest()
+		lines.append("★玩家↔巢穴 %.1f m（领地 %.1f m，%s）—— 脱战判定量的是这一段" % [
+			to_home,
+			_boss.leash_radius,
+			"已出领地" if to_home > _boss.leash_radius else "领地内",
+		])
+		lines.append("场地半边长 %.0f m      玩家↔沙虫 %.1f m（仅供参考）" % [
 			_ground_half_extent(),
 			_player_distance_to_boss(),
-			_boss.leash_radius,
-			"已出" if _player_distance_to_boss() > _boss.leash_radius else "圈内",
 		])
 
 	lines.append("玩家 " + _player_line())

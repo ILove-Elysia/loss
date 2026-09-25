@@ -54,8 +54,10 @@ signal boss_gone(boss_id: StringName)
 
 @export_group("数值")
 @export var max_health: int = 900
-## 追击速度。标尺：玩家 5.0、史莱姆 1.5 ⇒ Boss 落在 3.5 ~ 4.5
-@export var chase_speed: float = 4.0
+## 追击速度。标尺：玩家满速 5.0（饥饿 ×0.9、低电量 ×0.7 ⇒ 最低 3.15）、史莱姆 1.5。
+## 2026-09-25 从 4.0 降到 3.4：4.0 只比满速玩家慢 1 m/s，**低电量时还比玩家快**，
+## 玩家反馈"逃不掉"。3.4 让满速能明显甩开，虚弱状态仍甩不开（脱身靠领地判定）。
+@export var chase_speed: float = 3.4
 ## 回巢/逃走时的移速倍率（逃走过程也要能被玩家看见）
 @export var return_speed_scale: float = 1.4
 
@@ -64,10 +66,12 @@ signal boss_gone(boss_id: StringName)
 @export var trigger_radius: float = 14.0
 ## 要在圈里待够多久才登场（中途出圈计时清零）
 @export var trigger_dwell: float = 1.5
-## 玩家跑出多远算脱战（应显著大于触发半径）
-@export var leash_radius: float = 34.0
-## 出圈持续多久才真脱战（防止在边界反复横跳刷"回满血"）
-@export var leash_time: float = 4.0
+## **领地半径**（圆心＝巢穴）：玩家跑出这个圈 = 把 Boss 从它的领地里拉出去了。
+## ⚠ 基准是「玩家 ↔ **巢穴**」，不是「玩家 ↔ Boss」——理由见 _check_leash()。
+## 24 m：明显大于触发半径 14 m（在圈内正常打不会误触发），从巢穴边再跑 10 m 就能脱身。
+@export var leash_radius: float = 24.0
+## 离开领地持续多久才真脱战（防止在边界反复横跳刷"回满血"）
+@export var leash_time: float = 1.5
 ## 判定"已经到巢穴了"的半径
 @export var arrive_radius: float = 1.2
 
@@ -164,6 +168,8 @@ func _physics_process(delta: float) -> void:
 			_move_dir = Vector3.ZERO
 
 	var speed: float = _movement_speed()
+	# 领地绳：追击/出招期间不许迈出领地（回家路径不受限，否则它永远回不了巢）
+	_move_dir = _clamped_move_dir(_move_dir, speed, delta)
 	velocity.x = _move_dir.x * speed
 	velocity.z = _move_dir.z * speed
 	velocity.y -= _gravity * delta
@@ -320,20 +326,52 @@ func _movement_speed() -> float:
 			return 0.0
 
 
-## 脱战判定：出圈持续 leash_time 才生效（返回值 = 本帧是否已经转入 RETREAT）
+## 领地绳：追击与出招期间，把"朝领地外"的那一维分量削掉。
+## 三个目的：① 它不会一路把你追出几十米远；② 「它守在领地边缘」这件事**看得见**，
+## 玩家不用靠猜；③ 回家路径（RETREAT / FALLEN）不受限，否则它永远回不了巢。
+## 做法＝削掉朝外分量再归一化 ⇒ 它会贴着领地边缘横向滑动，而不越走越远。
+func _clamped_move_dir(dir: Vector3, speed: float, delta: float) -> Vector3:
+	if dir == Vector3.ZERO or speed <= 0.0:
+		return dir
+	if _state != BossState.State.CHASE and not BossState.is_attack_phase(_state):
+		return dir
+	var next_position: Vector3 = global_position + dir * speed * delta
+	if _horizontal_distance(next_position, _home) <= leash_radius:
+		return dir
+	var outward: Vector3 = _horizontal_dir(_home, global_position)
+	var along: float = dir.x * outward.x + dir.z * outward.z
+	if along <= 0.0:
+		return dir
+	var slid: Vector3 = Vector3(dir.x - outward.x * along, 0.0, dir.z - outward.z * along)
+	if slid.length() < 0.0001:
+		return Vector3.ZERO
+	return slid.normalized()
+
+
+## 脱战判定：玩家跑出**领地**（圆心＝巢穴、半径 leash_radius）并持续 leash_time 才生效。
+## 返回值 = 本帧是否已经转入 RETREAT。
+##
+## ⚠ 基准是「玩家 ↔ 巢穴」，**不是「玩家 ↔ Boss」**（2026-09-25 改）：
+##   ① 案设就是"在一定距离内追击"—— 绳子拴在巢穴上，被拉出领地就回巢；
+##      语义是"你离开了它的地盘"，而不是"你离它本人多远"；
+##   ② 量 Boss↔玩家 时，脱战要求**拉开 leash_radius 的差距**，而这个差距只能靠速度差
+##      一点点攒（玩家 5.0 vs Boss 3.4；饥饿 ×0.9、低电 ×0.7，最低 3.15 ⇒ 低电时
+##      **Boss 比玩家还快**）。原值 34 m ÷ 1 m/s ⇒ 得笔直跑 30 秒以上，实战等于
+##      "永远逃不掉"（2026-09-25 用户反馈）；
+##   ③ 量「玩家↔巢穴」则**与速度差无关**：跑出去多少就是多少，跑十来米就能脱身。
 func _check_leash(delta: float) -> bool:
 	if BossState.is_terminal(_state):
 		return true
 	if leash_time <= 0.0:
 		return false
-	var distance: float = player_distance()
+	var distance: float = player_home_distance()
 	if distance <= leash_radius:
 		_leash_timer = 0.0
 		return false
 	_leash_timer += delta
 	if _leash_timer < leash_time:
 		return false
-	_start_retreat("玩家拖太远 %.1f m（>%.1f m 持续 %.1fs）" % [distance, leash_radius, leash_time])
+	_start_retreat("玩家离开领地 %.1f m（>%.1f m 持续 %.1fs）" % [distance, leash_radius, leash_time])
 	return true
 
 # ============================================
@@ -545,6 +583,15 @@ func player_distance() -> float:
 	return _horizontal_distance(global_position, body.global_position)
 
 
+## 玩家到**巢穴**的平面距离 —— 这是**领地（脱战）判定的基准**，调试面板也显示它。
+## 玩家不在场返回 INF（而不是 0）：找不到人不该被判成"乖乖待在领地里"。
+func player_home_distance() -> float:
+	var body: Node3D = player_body()
+	if body == null:
+		return INF
+	return _horizontal_distance(_home, body.global_position)
+
+
 ## 权威判定走玩家的 Physics.is_alive()（死亡期间敌人应放弃锁定）
 func player_alive() -> bool:
 	var body: Node3D = player_body()
@@ -712,7 +759,14 @@ func debug_damage_to(target_health: int) -> void:
 	take_damage(delta)
 
 
-## 把所有招式的冷却拉满（测"全表在 CD 时的兜底"：应当继续追击、不空放、不卡死）
+## 把所有招式的冷却拉满（测"全表在 CD 时的兜底"：应当继续追击、不空放、不卡死）。
+##
+## ⚠ **必须在这一帧没有招式正在三段里的时候调用**：正在播的那一招走到 RECOVER
+##   结束时会把自己的 cooldown 写回去（`_cooldowns[id] = attack.cooldown`，
+##   例如 sand_spit 的 9 s），把这里设的 30 s 覆盖掉 ⇒ 该招提前解禁。
+##   2026-09-25 踩过：先跑了一段位移、让 sand_spit 进了前摇，才调本函数，
+##   结果 bite 还有 19 s、sand_spit 已经归零，测试里 Boss 又开始出招。
+##   若确实需要在招式播到一半时叫停，请等它结算后再调一次。
 func debug_set_all_cooldowns(seconds: float) -> void:
 	for key in _cooldowns.keys():
 		_cooldowns[key] = maxf(seconds, 0.0)

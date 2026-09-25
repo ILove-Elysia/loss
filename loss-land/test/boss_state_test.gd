@@ -114,6 +114,26 @@ func _boss_distance() -> float:
 	return _boss.player_distance()
 
 
+## 把假玩家放到"离**巢穴** distance 米"的地方。
+## 领地（脱战）判定的基准是巢穴、不是 Boss 本人，所以专门留一个以巢穴为基准的摆位函数。
+func _place_target_from_home(distance: float) -> void:
+	var home: Vector3 = _boss.home_position()
+	_target.global_position = Vector3(home.x, 0.0, home.z + distance)
+
+
+## 玩家到巢穴的距离 —— 领地判定真正量的那一段
+func _target_home_distance() -> float:
+	return _boss.player_home_distance()
+
+
+## Boss 到巢穴的距离 —— 领地绳应该把它按在 leash_radius 上
+func _boss_home_distance() -> float:
+	var home: Vector3 = _boss.home_position()
+	var dx: float = _boss.global_position.x - home.x
+	var dz: float = _boss.global_position.z - home.z
+	return sqrt(dx * dx + dz * dz)
+
+
 func _step(seconds: float) -> void:
 	var per_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
 	var elapsed: float = 0.0
@@ -184,12 +204,23 @@ func _run_cases() -> void:
 	_check(_boss.get_state() == BossState.State.EMERGING, "停留够时长 → 登场")
 	_check(not BossState.can_be_hurt(_boss.get_state()), "登场期间不可受伤")
 
-	# 挪到所有招式射程外，免得它一出场就出招（出招会把状态推到前摇）
-	_place_target_at(25.0)
+	# 挪到所有招式射程外（免得一出场就出招），但**别出领地**：
+	# 领地判定量的是「玩家↔巢穴」，站到 leash_radius 外会直接把脱战计时打开。
+	_place_target_at(20.0)
 	await _step(_boss.emerge_time + 0.2)
 	_check(_boss.get_state() == BossState.State.CHASE, "登场结束 → 追击")
 
 	print("[用例 8] 追击与脱战")
+	# 先把所有招式按在 CD 上：这一段要测的是**纯追击位移**与**领地判定**。
+	# 一旦让它出招，①前摇/后摇的 move_scale 会把位移吃掉（bite/sweep 近乎定身），
+	# 位移断言必假失败；②假玩家要是被咬死，走的就是"玩家死亡"那条分支，
+	# 领地判定根本没被执行。
+	# ⚠ 必须在这里（还没有招式在播的时候）就按：等招式播起来再按，
+	#   它结束时 reco 分支会把自己的 cooldown（如 sand_spit 的 9 s）写回去，
+	#   于是这一招提前解禁、又开始出招（2026-09-25 踩过：spit CD 9 → 0，
+	#   而同时按下的 bite 仍有 19 s）。
+	_boss.debug_set_all_cooldowns(30.0)
+
 	var distance_before: float = _boss_distance()
 	await _step(1.0)
 	var distance_after: float = _boss_distance()
@@ -200,15 +231,37 @@ func _run_cases() -> void:
 	_check(_boss.get_health() < _boss.get_max_health(),
 		"追击状态下可被扣血（%d / %d）" % [_boss.get_health(), _boss.get_max_health()])
 
-	# 拖到脱战圈外，且要**远到"追 4 秒也追不回圈内"**——否则它会一路追进来，
-	# leash 计时器反复清零，永远不脱战
-	var far: float = _boss.leash_radius + _boss.chase_speed * _boss.leash_time + 10.0
-	_place_target_at(far)
+	# ① 领地内站多久都不脱战
+	_place_target_from_home(_boss.leash_radius * 0.9)
+	await _step(_boss.leash_time * 3.0)
+	_check(_boss.get_state() == BossState.State.CHASE,
+		"还在领地内（%.1f m < %.1f m）→ 追多久都不脱战"
+			% [_target_home_distance(), _boss.leash_radius])
+
+	# ② 领地绳：追到领地边缘就停住，不许越界。
+	#    临时把 leash_time 拉到 10 s —— 否则脱战计时会先跑完，看不到"它停在边上"。
+	var saved_leash_time: float = _boss.leash_time
+	_boss.leash_time = 10.0
+	_place_target_from_home(_boss.leash_radius + 20.0)
+	await _step(6.0)
+	_check(_boss_home_distance() <= _boss.leash_radius + 0.5,
+		"领地绳：沙虫被按在领地边缘（离巢穴 %.1f m ≤ %.1f m）"
+			% [_boss_home_distance(), _boss.leash_radius])
+	_check(_boss.get_state() == BossState.State.CHASE,
+		"领地绳生效期间仍在追击态（没卡死）")
+
+	# ③ 回领地内 → 计时清零（顺带验证"回圈就重置"，否则下一步会秒脱战）
+	_place_target_from_home(_boss.leash_radius * 0.5)
+	await _step(0.5)
+	_boss.leash_time = saved_leash_time
+
+	# ④ 出领地：立刻计时，不满 leash_time 不走
+	_place_target_from_home(_boss.leash_radius + 12.0)
 	await _step(_boss.leash_time * 0.5)
 	_check(_boss.get_state() == BossState.State.CHASE,
-		"出圈不满 %.1fs 还不脱战" % _boss.leash_time)
+		"刚出领地不满 %.1fs 还不脱战" % _boss.leash_time)
 	await _step(_boss.leash_time * 0.5 + 0.3)
-	_check(_boss.get_state() == BossState.State.RETREAT, "出圈持续够久 → 脱战逃走")
+	_check(_boss.get_state() == BossState.State.RETREAT, "出领地持续够久 → 脱战逃走")
 
 	print("[用例 2] 脱战回巢：回满血 + 回待机（不推进世界）")
 	var got_home: bool = await _wait_for_state(BossState.State.DORMANT, 30.0)
