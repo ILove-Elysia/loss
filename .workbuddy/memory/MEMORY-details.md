@@ -99,7 +99,8 @@
 - **阶段切换是隐式闩锁**：没有 `_phase` 字段，`_current_table()` 只在决策点调用 ⇒ 攻击中途不会换表。规则＝按优先级取第一个「`cooldown_left==0` 且玩家在 `[min_range,max_range]`」的技能；**一个都没有 → 回 CHASE**（没有 idle/空放）。
 - 距离一律取 `player/Physics`（`CharacterBody3D`），**不读 `player` 根节点**（见主文件铁律四）。`take_damage` 首行 `_untouchable`/`can_be_hurt` 守卫 ⇒ 防同帧多段伤害穿透保底的 1 HP（玩家 `intersect_shape(...,10)` 一击可命中多个碰撞体）。
 - 保底 1 HP → `_enter_fallen()`（一次性，写 `WorldState` 巢穴塌陷 flag）→ `_process_going_home()` 到底后转 `GONE`；`RETREAT` 与 `FALLEN` **共用** `_process_going_home()`，区别是 RETREAT 可重复、不写世界状态。玩家死亡 → `_on_player_died` → RETREAT 回家**回满血**再 DORMANT。
-- `RETREAT`/`FALLEN` 回家途中「太远（`leash_radius` 超时）或玩家死」→ 回家；`trigger_radius`+`trigger_dwell` 决定唤醒。
+- **脱战判定量的是「玩家↔沙虫」**（`_check_leash` → `player_distance()`，基准是 Boss 自己的 `global_position`），**不是玩家↔巢穴**：玩家要在沙虫 `leash_radius`(34 m) 外**连续**待满 `leash_time`(4 s) 才转 `RETREAT`。⚠ 而沙虫 `chase_speed=4.0`、玩家 `speed=5.0`（饿 / 低电再 ×0.9 / 0.7）⇒ 每秒只拉开约 1 m，靠两条腿要笔直跑 30 s（≈170 m）才够 —— **想测这条分支用测试场地的 `H` 键**（以沙虫当前位置为基准、瞬移到 `leash+30 m`；站着不动时沙虫仍以 4 m/s 逼近，4 s 吃掉 16 m，余量给小了计时走不满，看着像"脱战失灵"）。`trigger_radius`+`trigger_dwell` 决定唤醒；待机时沙虫蹲在巢穴里，所以**触发圈以巢穴为圆心是对的，脱战圈必须跟着沙虫跑**。
+- 测试场地几何**全部派生**、不写死：地面半边长 = `leash_radius + extra_runway`（`extra_runway` 默认 150、下限 45 m）；触发圈挂 `Nest`（圆心＝巢穴）；脱战圈挂场地根、**每帧把 x/z 对齐沙虫**。改 `@export` 数值后按 `R` 重铺场地 + 重生成沙虫。玩家 ↔ 沙虫 的距离在调试面板上是实时数值（对不上就说明没在圈外）。
 - **测试场地**：`tscn/sandworm_test.tscn`（根脚本 `test/sandworm_arena.gd`）＝平地 90×90 + player + 巢穴 + 调试面板；场地圆环在**运行时按 Boss 的 `@export` 半径生成**（所以改数值圆环会跟着变）。必须带 `test/arena_flat_map_gen.gd`（`add_to_group("map_gen")` 的桩，因为 `physics.gd`/`vitals.gd` 要查地形组）。**只能用 F6 独立窗口跑，F5 内嵌运行不可用**。
 - 按键：T 传送到巢边 / H 传送到远处 / K 杀玩家 / W `debug_wake()` / 1→60% 血 / 2→40% 血 / 9→1 HP / R 重置（`WorldState.reset()` + 复活）。查询接口：`get_state/get_health/current_phase/current_attack_id/debug_line`。
 - `test/mock_boss_target.gd`（`signal died`、真会死）与旧的 `mock_player_body.gd`（"挨打但不死"）**语义不同，别混用**。

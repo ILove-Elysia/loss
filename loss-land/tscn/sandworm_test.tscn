@@ -14,10 +14,10 @@ ambient_light_energy = 9.0
 albedo_color = Color(0.78, 0.68, 0.46, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
-size = Vector3(90, 1, 90)
+size = Vector3(368, 1, 368)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
-size = Vector3(90, 1, 90)
+size = Vector3(368, 1, 368)
 
 [sub_resource type="CylinderMesh" id="CylinderMesh_nest"]
 top_radius = 1.4

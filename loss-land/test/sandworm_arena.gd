@@ -11,6 +11,14 @@
 # 场景内容：一块平地 + 玩家 + 巢穴标记 + 触发圈/脱战圈 + 状态调试面板。
 # 触发圈/脱战圈的**半径不是写死的**：运行时按沙虫 @export 的
 # trigger_radius / leash_radius 现建环形，改数值圈子跟着变，不会对不上。
+# 地面大小同样不写死：半边长 = leash_radius + extra_runway。
+# ⚠ 脱战判定量的是**玩家↔沙虫**（BossBase._check_leash → player_distance()），
+#   不是玩家↔巢穴；而沙虫 chase_speed=4.0、玩家 5.0 m/s（饿了 / 低电还要再乘
+#   0.9 / 0.7）—— 每秒只拉开 1 m 上下。想靠两条腿把 34 m 的脱战线跑出来，
+#   得笔直跑 30 s 以上（约 170 m）；旧场地 90x90 半边长才 45 m，跑两步就撞墙
+#   被贴脸，这条分支根本测不了。所以这里做两件事：
+#     ① 场地放大到 半边长 = 脱战线 + 150 m 跑道；
+#     ② 脱战圈改成**跟着沙虫跑**，你才能看见判定真正量的是哪一段距离。
 #
 # 运行方式：在编辑器里打开本场景，按 F6（**不要**按 F5，F5 进的是正式地图）。
 #
@@ -35,6 +43,9 @@ extends Node3D
 @export var leash_ring_color: Color = Color(1.0, 0.32, 0.18)
 ## 玩家被挪动时统一落到这个高度（让重力把他放回地面）
 @export var drop_height: float = 1.5
+## 脱战圈之外还要留多少米跑道（地面半边长 = leash_radius + 本值）。
+## 150 m 是按「玩家满速笔直跑」倒推的：要拉出 34 m 差距得跑 170 m 上下。
+@export var extra_runway: float = 150.0
 
 @export_group("调试")
 ## 让沙虫把自己的状态迁移打进日志（每秒一行 + 每次迁移一行）
@@ -45,6 +56,7 @@ const DEFAULT_BOSS_SCENE := "res://tscn/prefab/boss/sandworm.tscn"
 var _boss: BossBase = null
 var _label: Label = null
 var _nest: Node3D = null
+var _leash_ring: MeshInstance3D = null
 var _last_message: String = ""
 
 
@@ -52,11 +64,13 @@ func _ready() -> void:
 	_label = get_node_or_null("DebugLayer/DebugPanel/DebugText") as Label
 	_nest = get_node_or_null("Nest") as Node3D
 	_spawn_boss()
+	_fit_ground()
 	_build_rings()
 	_note("场地就绪：T 靠近巢穴 / H 拖远 / K 自杀 / W 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
 
 
 func _process(_delta: float) -> void:
+	_update_leash_ring_position()
 	if _label == null:
 		return
 	_label.text = "\n".join(_panel_lines())
@@ -164,15 +178,20 @@ func _move_player_near(near: bool) -> void:
 		_note("找不到玩家")
 		return
 	var radius: float = _boss.trigger_radius * 0.5
+	var anchor: Vector3 = _boss.home_position()
 	if not near:
-		radius = _boss.leash_radius + 8.0
-	var nest_position: Vector3 = _boss.home_position()
-	body.global_position = Vector3(nest_position.x + radius, drop_height, nest_position.z)
+		# ⚠ 脱战判定量的是**玩家↔沙虫**，不是玩家↔巢穴。
+		#   所以出圈必须以**沙虫当前位置**为基准；而且余量要够：
+		#   你站着不动时沙虫仍以 4 m/s 逼近，4 s 会吃掉 16 m ——
+		#   只给 8~12 m 余量，计时没走满就又落回圈内，看着像「脱战失灵」。
+		anchor = _boss.global_position
+		radius = _boss.leash_radius + 30.0
+	body.global_position = Vector3(anchor.x + radius, drop_height, anchor.z)
 	if near:
 		_note("玩家 → 距巢穴 %.1f m（触发圈 %.1f m 内，等 %.1f s 沙虫登场）"
 			% [radius, _boss.trigger_radius, _boss.trigger_dwell])
 	else:
-		_note("玩家 → 距巢穴 %.1f m（脱战圈 %.1f m 外，等 %.1f s 沙虫回巢）"
+		_note("玩家 → 距沙虫 %.1f m（脱战线 %.1f m 外，站住别动，等 %.1f s 沙虫回巢）"
 			% [radius, _boss.leash_radius, _boss.leash_time])
 
 
@@ -203,22 +222,98 @@ func _reset_all() -> void:
 	# 静态旗标跨场景存活，不主动清会把"上一局巢穴已坍塌"带进来
 	WorldState.reset()
 	_spawn_boss()
+	_fit_ground()
 	_build_rings()
-	_note("已重置：世界旗标清空、沙虫重生")
+	_note("已重置：世界旗标清空、沙虫重生、场地按当前数值重铺")
 
 
-## 触发圈 / 脱战圈：半径**从沙虫的 @export 现取**，改数值圈子立刻跟着变
+## 地面半边长 = 脱战圈 + 跑道（有下限 45 m，免得数值调小了场地变成一块豆腐干）
+func _ground_half_extent() -> float:
+	var leash: float = 34.0
+	if _boss != null and is_instance_valid(_boss):
+		leash = _boss.leash_radius
+	return maxf(leash + extra_runway, 45.0)
+
+
+## 按当前数值把地面（Mesh + 碰撞盒）铺开，顶面仍保持 y=0。
+## 只改尺寸不动逻辑：碰撞层还是 layer2 / mask0，点击寻路也不受影响。
+func _fit_ground() -> void:
+	var ground: Node3D = get_node_or_null("Ground") as Node3D
+	if ground == null:
+		return
+	var side: float = _ground_half_extent() * 2.0
+	var dims: Vector3 = Vector3(side, 1.0, side)
+	var offset: Vector3 = Vector3(0.0, -0.5, 0.0)
+	var mesh_node: MeshInstance3D = ground.get_node_or_null("Mesh") as MeshInstance3D
+	if mesh_node != null:
+		var box: BoxMesh = mesh_node.mesh as BoxMesh
+		if box != null:
+			# 复制一份再改：.tscn 里的 SubResource 是场景共享的，直接改会污染编辑器里的值
+			var box_copy: BoxMesh = box.duplicate() as BoxMesh
+			box_copy.size = dims
+			mesh_node.mesh = box_copy
+		mesh_node.position = offset
+	var shape_node: CollisionShape3D = ground.get_node_or_null("Shape") as CollisionShape3D
+	if shape_node != null:
+		var box_shape: BoxShape3D = shape_node.shape as BoxShape3D
+		if box_shape != null:
+			var shape_copy: BoxShape3D = box_shape.duplicate() as BoxShape3D
+			shape_copy.size = dims
+			shape_node.shape = shape_copy
+		shape_node.position = offset
+
+
+## 玩家（Physics 子节点）到巢穴的平面距离（只作参考，**不是**脱战判据）
+func _player_distance_to_nest() -> float:
+	if _boss == null:
+		return 0.0
+	var body: Node3D = _find_player_body()
+	if body == null:
+		return 0.0
+	return _flat_distance(body.global_position, _boss.home_position())
+
+
+## 玩家↔沙虫的平面距离 —— **这才是脱战判据**（BossBase._check_leash 用的就是它）
+func _player_distance_to_boss() -> float:
+	if _boss == null or not is_instance_valid(_boss):
+		return 0.0
+	var body: Node3D = _find_player_body()
+	if body == null:
+		return 0.0
+	return _flat_distance(body.global_position, _boss.global_position)
+
+
+## 脱战圈跟着沙虫的平面位置走（y 压回地面）
+func _update_leash_ring_position() -> void:
+	if _leash_ring == null or not is_instance_valid(_leash_ring):
+		return
+	if _boss == null or not is_instance_valid(_boss):
+		return
+	_leash_ring.global_position = Vector3(_boss.global_position.x, 0.06, _boss.global_position.z)
+
+
+## 触发圈 / 脱战圈：半径**从沙虫的 @export 现取**，改数值圈子立刻跟着变。
+## 触发圈挂在巢穴上（待机时沙虫就蹲在巢穴里 ⇒ 以巢穴为圆心是对的）；
+## 脱战圈**必须跟着沙虫跑** —— 判定量的是玩家↔沙虫，圈要是钉在巢穴上，
+## 你会以为自己已经站在圈外、判定却还在圈内，「逃不掉」的错觉多半来自这里。
 func _build_rings() -> void:
 	if _nest == null or _boss == null:
 		return
 	for child in _nest.get_children():
-		if child is MeshInstance3D and (child.name == "TriggerRing" or child.name == "LeashRing"):
+		if child is MeshInstance3D and child.name == "TriggerRing":
 			child.queue_free()
-	_make_ring(_boss.trigger_radius, trigger_ring_color, "TriggerRing")
-	_make_ring(_boss.leash_radius, leash_ring_color, "LeashRing")
+	if _leash_ring != null and is_instance_valid(_leash_ring):
+		_leash_ring.queue_free()
+	_leash_ring = null
+	var trigger_ring: MeshInstance3D = _make_ring(_boss.trigger_radius, trigger_ring_color, "TriggerRing")
+	_nest.add_child(trigger_ring)
+	_leash_ring = _make_ring(_boss.leash_radius, leash_ring_color, "LeashRing")
+	add_child(_leash_ring)
+	_update_leash_ring_position()
 
 
-func _make_ring(radius: float, color: Color, ring_name: String) -> void:
+## 造环但**不入树**：由调用方决定挂给谁（触发圈挂巢穴、脱战圈挂场地根）
+func _make_ring(radius: float, color: Color, ring_name: String) -> MeshInstance3D:
 	# TorusMesh 的环心半径 = (inner + outer) / 2，管粗 = (outer - inner) / 2
 	var torus: TorusMesh = TorusMesh.new()
 	torus.inner_radius = maxf(radius - 0.15, 0.05)
@@ -232,7 +327,7 @@ func _make_ring(radius: float, color: Color, ring_name: String) -> void:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	ring.material_override = material
 	ring.position = Vector3(0.0, 0.06, 0.0)
-	_nest.add_child(ring)
+	return ring
 
 # ============================================
 # 调试面板
@@ -257,6 +352,12 @@ func _panel_lines() -> Array[String]:
 		if WorldState.get_flag(Sandworm.NEST_FLAG, 0) == 1:
 			nest_label = "已坍塌"
 		lines.append("当前相位 %s      巢穴 %s" % [table_label, nest_label])
+		lines.append("场地半边长 %.0f m      玩家↔沙虫 %.1f m（脱战线 %.1f m，%s）" % [
+			_ground_half_extent(),
+			_player_distance_to_boss(),
+			_boss.leash_radius,
+			"已出" if _player_distance_to_boss() > _boss.leash_radius else "圈内",
+		])
 
 	lines.append("玩家 " + _player_line())
 	lines.append("T 靠近巢穴 / H 拖远 / K 自杀 / W 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
@@ -277,7 +378,7 @@ func _player_line() -> String:
 		alive = "死亡"
 	return "HP %d / %d（%s）  距巢穴 %.1f m" % [
 		int(raw), int(maximum), alive,
-		_flat_distance(body.global_position, _boss.home_position()) if _boss != null else 0.0,
+		_player_distance_to_nest(),
 	]
 
 
