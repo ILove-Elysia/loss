@@ -10,7 +10,7 @@
 #   3 × 900 行，而且表达不了 Boss 真正需要的几件事（前摇可躲、濒死保命、
 #   脱战可重复、世界推进）。
 #
-# 三条钉死的规则（改动前先读 主线设计规格.md 1.2）：
+# 五条钉死的规则（改动前先读 主线设计规格.md 1.2）：
 #   1. **没有 dead 状态**。Boss 的终点是 GONE（退场），不是"死亡 + queue_free"。
 #      所以本文件里不会有 _die()，也不会有 queue_free()。
 #   2. **RETREAT 与 FALLEN 是两件事**。RETREAT = 玩家跑了，可重复、回满血、
@@ -22,6 +22,11 @@
 #      它平时在地下潜行，受击碰撞体也一起关着 ⇒ 玩家**看得见但打不到**。
 #      判据只有 _is_surfaced() 一处，碰撞层开关与占位美术的埋深都从它派生 ——
 #      三者共用一个判据，就不会出现"看着在地上却打不到"这种自相矛盾。
+#   5. **判定形状有三种**（字段都在 BossSandwormAttack）：就地圆形 / 面前扇形
+#      （arc_degrees，基准是 **_facing 逻辑朝向**）/ 弹道（projectile_speed，
+#      发射出去之后命中与扣血都归 boss_sandworm_spit.gd 管）。
+#      ⚠ 扇形与弹道的朝向一律**不许读 Visual** —— Visual 是表现层，
+#        接正式美术时会换成 SpriteFacing，判定不能跟着一起改。
 #
 # 与现有系统的边界：
 #   - **不进 "enemy" 组**，用 "boss" 组：
@@ -95,6 +100,14 @@ signal boss_gone(boss_id: StringName)
 ## 沉下去 / 浮上来的速度（冒头与钻回的手感都由它决定，6.0 ⇒ 约 0.3 s 完成）
 @export var rise_speed: float = 6.0
 
+## 弹道招（吐沙）的**嘴**：从 Boss 中心沿"面朝方向"往前这么多米。
+## 往前一点才不会一出生就撞在自己身上（虽然本工程沙弹不用物理查询，见弹道脚本）
+@export var spit_muzzle_forward: float = 0.9
+## 弹道招的发射高度（相对 Boss 脚下）。
+## ⚠ 平射弹道的飞行高度 = 发射高度，而命中判定只看**平面**距离（见 boss_sandworm_spit.gd）
+##   ⇒ 这个值只影响"看起来是从多高的地方吐出来的"，压在玩家躯干附近（≈1.0）最自然。
+@export var spit_muzzle_height: float = 1.0
+
 @export_group("占位外观")
 ## 常态体色。⚠ 占位材质走 UNSHADED ⇒ 这几个色值是**原样输出**的，
 ## 挑色时按"屏幕上想看到什么"直接定，不用再考虑光照会被打亮多少。
@@ -133,6 +146,11 @@ var _strike_done: bool = false
 var _strike_origin: Vector3 = Vector3.ZERO
 ## 顺序轮转的"下一招"指针（表 1：①②③；表 2：④①②③）
 var _rotation_index: int = 0
+## **逻辑朝向**（平面单位向量）—— 扇形判定（arc_degrees）只认它，绝不读 Visual.rotation。
+##   · 追击时每帧朝玩家（_process_chase → _face）；
+##   · 出招期间只有 move_scale > 0 的招会继续转向，定身招在前摇里**朝向是锁住的**
+##     ⇒ 这就是"撕咬只咬嘴前面、绕到背后能躲开"的实现方式。
+var _facing: Vector3 = Vector3(0.0, 0.0, 1.0)
 ## 上一帧的表号（1/2）。换表要把轮转指针归零，否则表 2 的顺序读不出"4123"
 var _phase_cache: int = 1
 ## "露头时可被打"的碰撞层。**从场景读**（sandworm.tscn 写 8 = layer 4），
@@ -565,7 +583,11 @@ func _enter_strike() -> void:
 	_set_state(BossSandwormState.State.STRIKE)
 
 
-## 判定生效：玩家在判定半径内才扣血。用玩家**本体**（player/Physics）算距离
+## 判定生效 —— "这一招的判定段要做什么"的总入口，**三条岔路**：
+##   · has_zone()       → 圆形区域吞噬（流沙）：判"圈里还有谁"
+##   · has_projectile() → 弹道（吐沙）：只负责**射出去**，命中归弹道自己
+##   · 其余             → 就地按 radius（+ 可选 arc_degrees 扇形）判玩家，
+##                        距离用玩家**本体**（player/Physics）算，不是根节点
 ##
 ## ⚠⚠ 本函数**会在执行途中被同步重入**，这是本文件最危险的一处：
 ##      body.take_damage() 可能把玩家打死 ⇒ 玩家同步发 died 信号
@@ -584,6 +606,11 @@ func _apply_attack_damage() -> void:
 	if attack.has_zone():
 		_apply_zone_devour(attack)
 		return
+	# 弹道招（吐沙）：判定段**只负责把沙弹射出去**，命中与扣血归沙弹飞行时结算
+	# （所以它的伤害可能落在后摇甚至下一招期间 —— 见 _on_spit_struck）
+	if attack.has_projectile():
+		_fire_spit(attack)
+		return
 	var body: Node3D = player_body()
 	if body == null or not player_alive():
 		_debug("招式 %s 落空（玩家不在场）" % attack.attack_id)
@@ -593,6 +620,12 @@ func _apply_attack_damage() -> void:
 	if distance > attack.radius:
 		_debug("招式 %s 落空（玩家 %.1f m 在 %.1f m 判定外）"
 			% [attack.attack_id, distance, attack.radius])
+		return
+	# 面前扇形（撕咬）：够得着还不够，还得在**嘴前面**。朝向在前摇开始就锁住了，
+	# 所以玩家绕到背后就能躲开这一口 —— 这就是扇形存在的意义
+	if not _in_attack_arc(attack, origin, body.global_position):
+		_debug("招式 %s 落空（玩家绕到了 %.0f° 扇形的背后）"
+			% [attack.attack_id, attack.arc_degrees])
 		return
 	if not body.has_method("take_damage"):
 		return
@@ -610,6 +643,64 @@ func _damage_origin(attack: BossSandwormAttack) -> Vector3:
 	if attack.aims_at_player:
 		return _strike_origin
 	return global_position
+
+
+## 目标在不在"**面前扇形**"里。全圆招（arc_degrees = 0 / 360）恒真，不参与判定。
+##
+## 基准是 `_facing`（逻辑朝向），不是"此刻指向玩家的方向" —— 拿后者来比永远得 0°，
+## 扇形就成了摆设。朝向什么时候刷新见 _facing 的说明（定身招全程锁住）。
+## 玩家与 Boss 重合（方向向量为 0）时算命中：贴脸咬不该因为除零而落空。
+func _in_attack_arc(attack: BossSandwormAttack, origin: Vector3, target_position: Vector3) -> bool:
+	if not attack.is_sector():
+		return true
+	var to_target: Vector3 = _horizontal_dir(origin, target_position)
+	if to_target == Vector3.ZERO:
+		return true
+	return _facing.dot(to_target) >= cos(attack.half_arc_radians())
+
+
+## 打一发沙弹（吐沙）。弹道脚本负责飞行、命中、扣血与自毁；本函数只管发射。
+##
+## 三件必须钉死的事：
+##   ① **目标本体由本函数传进去**（player_body() 是"玩家是谁"的唯一权威入口），
+##      弹道不去自己搜场景 —— 免得又多一处会走样的答案；
+##   ② 方向 = **发射这一刻**玩家所在的位置 ⇒ 之后玩家走位就躲得掉（"可躲"的来源）；
+##   ③ 飞出去的沙弹**不属于招式三段**：Boss 进 RECOVER / CHASE 甚至脱战，它照样飞。
+##      命中时靠 struck 信号回传（见 _on_spit_struck），那条链路里**不许读 _attack**。
+func _fire_spit(attack: BossSandwormAttack) -> void:
+	var body: Node3D = player_body()
+	if body == null or not player_alive():
+		_debug("招式 %s 落空（玩家不在场，没吐出去）" % attack.attack_id)
+		return
+	var parent_node: Node = get_parent()
+	if parent_node == null:
+		return
+	var spit: BossSandwormSpit = BossSandwormSpit.new()
+	spit.attack_id = attack.attack_id
+	spit.speed = attack.projectile_speed
+	spit.damage = attack.damage
+	spit.hit_radius = attack.projectile_hit_radius
+	spit.max_distance = attack.projectile_range()
+	spit.debug_enabled = debug_enabled
+	parent_node.add_child(spit)
+	# ⚠ 直接 connect、**不要 bind**：bind 的参数是接在信号参数**后面**的，顺序容易搞反
+	#   （2026-09-26 就因为按"前置"写而炸成 `expected 2 argument(s), but called with 3`）。
+	#   所以 attack_id 由沙弹自己带着（spit.attack_id），两边签名就能一眼对上。
+	spit.struck.connect(_on_spit_struck)
+	var muzzle: Vector3 = global_position + _facing * spit_muzzle_forward
+	muzzle.y = global_position.y + spit_muzzle_height
+	spit.launch(muzzle, body.global_position, body)
+	_debug("招式 %s 吐出沙弹（速度 %.0f，命中半径 %.1f，最远 %.0f）"
+		% [attack.attack_id, spit.speed, spit.hit_radius, spit.max_distance])
+
+
+## 沙弹命中回传。**只转报，绝不读 _attack**：
+## 沙弹落地时 Boss 可能早已不在这一招上了（甚至已经脱战回巢），
+## 而"这一招命中了"这件事仍然成立 —— 所以 attack_id 由沙弹自己带回来
+## （发射时写进 spit.attack_id），不从当前招式反查。
+func _on_spit_struck(attack_id: StringName, damage: int) -> void:
+	attack_landed.emit(attack_id, damage)
+	_debug("招式 %s 的沙弹命中玩家，扣 %d" % [attack_id, damage])
 
 
 ## 流沙吞噬：圈内**所有**单位各挨一次（玩家 + 其他生物），没躲出去就吃满。
@@ -1065,13 +1156,17 @@ func _update_visual(delta: float) -> void:
 	_visual.visible = position.y > -buried_depth + 0.05
 
 
-## 占位朝向：只转 Visual 的 yaw（正式美术接入后改走
-## script/visual/sprite_facing.gd 的 facing_basis —— 那时要**删掉**这里，
-## 否则会和 SpriteFacing 抢 Visual 的 basis）
+## 转向。**逻辑朝向与表现分开记**：
+##   · `_facing`（平面单位向量）是**判定口径** —— 扇形攻击只认它；
+##   · Visual 的 yaw 只是占位表现。
+## 为什么不读 Visual.rotation：接正式美术后朝向会改走
+## script/visual/sprite_facing.gd 的 facing_basis（那时要**删掉**下面写 Visual 的那几行），
+## 判定绝不该跟着表现层的实现方式一起改。
 func _face(dir: Vector3) -> void:
-	if _visual == null:
-		return
 	if absf(dir.x) < 0.001 and absf(dir.z) < 0.001:
+		return
+	_facing = Vector3(dir.x, 0.0, dir.z).normalized()
+	if _visual == null:
 		return
 	# 本脚本把"面向"表达为 Visual 的局部 +Z 指向目标（占位模型的"下颚"挂在 +Z）
 	var rotation: Vector3 = _visual.rotation
@@ -1182,6 +1277,12 @@ func current_attack_id() -> StringName:
 	if _attack == null:
 		return &""
 	return _attack.attack_id
+
+
+## 当前**逻辑朝向**（平面单位向量）。扇形判定（arc_degrees）的基准就是它。
+## 测试场地/调试面板可以拿它来画扇形、或者验证"绕到背后就打不到"。
+func facing_direction() -> Vector3:
+	return _facing
 
 
 ## 调试面板用的一行描述（测试场地每帧刷这个）

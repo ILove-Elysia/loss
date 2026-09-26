@@ -13,6 +13,12 @@
 #   strike_time     判定：真正扣血的那一小段（只判定一次，不是每帧）
 #   recover_time    后摇：硬直，玩家的输出窗口
 #
+# 判定形状的三种玩法（互斥，见各自的 @export 说明）：
+#   ① 默认        判定段就地按 radius 量"玩家↔判定圆心"的距离
+#   ② arc_degrees 再叠一层**面前扇形**限制（撕咬：只咬嘴前面的）
+#   ③ projectile  判定段改成**射一发弹道**出去，命中与扣血都归弹道管
+#                （吐沙：躲的是飞行段，不是前摇段）
+#
 # 数值一律 @export，方便实机边打边调；招式表在各自 Boss 脚本里用
 # make({...}) 声明（见 sandworm.gd）。
 # ============================================
@@ -32,6 +38,12 @@ extends Resource
 @export var radius: float = 4.0
 ## 判定体的高度（玩家碰撞体只有 1.0 m 高，判定要罩得住）
 @export var height: float = 2.6
+## **扇形张角（度）**。0 或 ≥360 ⇒ 整个圆；> 0 ⇒ 只打「**面朝方向**左右各 arc/2」的范围。
+##
+## 撕咬用它：从地里探出头咬一口，只该咬到**嘴前面**的东西，不该咬到屁股后面。
+## ⚠ 朝向在**开始前摇那一刻就锁住了**（定身招不前摇转向）⇒ 玩家绕到它背后就能躲开这一口。
+##   想让它咬的过程中跟着你转头，把 move_scale 调 > 0（代价是它会边走边转）。
+@export var arc_degrees: float = 0.0
 ## 命中扣多少血（玩家护甲会再减免，但至少掉 1）
 @export var damage: int = 15
 
@@ -71,6 +83,22 @@ extends Resource
 ## 沙虫：③流沙陷落、④潜行突袭 用 false；①②用 true。
 @export var surfaces_in_telegraph: bool = true
 
+@export_group("弹道（「射出东西」的招）")
+## > 0 ⇒ **弹道招**：判定段从嘴里射出一发沙弹，伤害由它**飞行中命中时**才结算。
+## 0 ⇒ 普通招式（判定段就地按 radius 结算）。
+##
+## 沙虫 ②吐沙 用它。与 aims_at_player 的分工：
+##   aims_at_player ⇒ 把落点钉在**地面**上（"朝地面打"），伤害仍在判定段就地结算；
+##   弹道            ⇒ 真的飞出去、真的撞上才算命中 ⇒ **玩家可以在飞行段走位躲开**
+##                     （躲的是弹道飞行的这零点几秒，不是前摇）。
+@export var projectile_speed: float = 0.0
+## 沙弹的命中半径：沙弹 ↔ 玩家本体的**平面**距离 ≤ 它就判命中。
+## ⚠ 只看平面距离、不看高度差 —— 平射弹道的高度等于发射高度（见 spit_muzzle_height），
+##   用三维距离会变成"从头顶飞过永远打不中"（无人机弹幕踩过的坑，见 drone_projectile.gd）。
+@export var projectile_hit_radius: float = 0.9
+## 沙弹的飞行距离上限（米）。0 ⇒ 直接沿用 max_range。
+@export var projectile_max_distance: float = 0.0
+
 @export_group("表现")
 ## 前摇期间能不能移动（0 = 定身，1 = 全速追）。定身＝给玩家跑的机会。
 ## ⚠ 本值对**三段全程**生效（前摇/判定/后摇都按它算移速）：
@@ -92,6 +120,7 @@ static func make(data: Dictionary) -> BossSandwormAttack:
 	attack.shape = int(data.get("shape", 0))
 	attack.radius = float(data.get("radius", attack.radius))
 	attack.height = float(data.get("height", attack.height))
+	attack.arc_degrees = float(data.get("arc_degrees", attack.arc_degrees))
 	attack.damage = int(data.get("damage", attack.damage))
 	attack.min_range = float(data.get("min_range", attack.min_range))
 	attack.max_range = float(data.get("max_range", attack.max_range))
@@ -107,6 +136,12 @@ static func make(data: Dictionary) -> BossSandwormAttack:
 	attack.zone_color = Color(data.get("zone_color", attack.zone_color))
 	attack.surfaces_in_telegraph = bool(
 		data.get("surfaces_in_telegraph", attack.surfaces_in_telegraph))
+	attack.projectile_speed = float(
+		data.get("projectile_speed", attack.projectile_speed))
+	attack.projectile_hit_radius = float(
+		data.get("projectile_hit_radius", attack.projectile_hit_radius))
+	attack.projectile_max_distance = float(
+		data.get("projectile_max_distance", attack.projectile_max_distance))
 	return attack
 
 # ============================================
@@ -133,6 +168,28 @@ func has_zone() -> bool:
 	return zone_radius > 0.0
 
 
+## 是不是"面前扇形"（0 或 360 度 = 全圆，不做角度限制）
+func is_sector() -> bool:
+	return arc_degrees > 0.0 and arc_degrees < 360.0
+
+
+## 扇形的半张角（弧度）—— 判定用"面朝方向 · 指向玩家的方向 ≥ cos(半张角)"
+func half_arc_radians() -> float:
+	return deg_to_rad(clampf(arc_degrees, 0.0, 360.0) * 0.5)
+
+
+## 是不是"射出弹道"的招（判定段从嘴里射一发，命中由弹道自己负责）
+func has_projectile() -> bool:
+	return projectile_speed > 0.0
+
+
+## 弹道能飞多远：没单独配 projectile_max_distance 就沿用 max_range
+func projectile_range() -> float:
+	if projectile_max_distance > 0.0:
+		return projectile_max_distance
+	return max_range
+
+
 ## 判定圆心该怎么算。**真正的落点要在施放那一刻取一次然后记住** ——
 ## 区域招的圆心是钉死的，玩家跑出去就等于躲开了（这就是"可躲"的实现方式）。
 ## ⚠ 别每帧重算：那样圈会跟着玩家跑，变成必中。
@@ -148,6 +205,10 @@ func describe() -> String:
 	var line: String = "%s 伤害%d 射程%.1f~%.1f 前摇%.2f 后摇%.2f CD%.1f" % [
 		label, damage, min_range, max_range, telegraph_time, recover_time, cooldown,
 	]
+	if is_sector():
+		line += " 扇形%.0f°" % arc_degrees
+	if has_projectile():
+		line += " 弹道%.0fm/s(命中半径%.1f)" % [projectile_speed, projectile_hit_radius]
 	if has_zone():
 		line += " 区域%.1fm(拉%.1f)" % [zone_radius, zone_pull_speed]
 	if not surfaces_in_telegraph:

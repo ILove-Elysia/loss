@@ -14,6 +14,8 @@
 #   1. 每个 `xxx.emit(a, b, c)` 的参数个数 == 该信号的声明参数个数
 #   2. 每个 `.connect(具名方法)` 的目标方法参数个数 == 信号声明参数个数
 #   3. 每个 `.connect(func(...) ...)` 的 lambda 参数个数 == 信号声明参数个数
+#   4. 带 `.bind(...)` 的 connect：期望参数个数 = **信号参数 + bind 参数**
+#      （⚠ bind 的参数是接在信号参数**后面**的，见 split_bind）
 #
 # 只检查**项目自定义信号**：内置信号（pressed / timeout / body_entered / …）
 # 没有 `signal` 声明，自然落在"未知信号"里被跳过，不会误报。
@@ -126,6 +128,26 @@ def arity_ok(total, required, want):
     return required <= want <= total
 
 
+def split_bind(inner):
+    """把 `callable.bind(a, b)` 拆成 (callable 表达式, bind 参数个数之和)。
+
+    ⚠ 顺序陷阱：`.bind()` 的参数是**接在信号参数之后**传给回调的
+      —— `signal s(x)` + `s.connect(f.bind(y))` ⇒ `f` 要收 (x, y) 两个。
+    2026-09-26 沙虫沙弹的命中回传就按"bind 参数在前"写错了签名，
+    运行时才炸 `Method expected 2 argument(s), but called with 3`；
+    当时这里还是一句 `continue`（见本文件改动前的版本），完全拦不住。
+    """
+    total = 0
+    while True:
+        m = re.search(r"\.bind\s*\(", inner)
+        if not m:
+            break
+        bind_inner, end = balanced(inner, m.end() - 1)
+        total += arg_count(bind_inner)
+        inner = inner[:m.start()] + inner[end + 1:]
+    return inner.strip(), total
+
+
 def check_file(path, signals, rel):
     text = read(path)
     funcs = collect_funcs(text)
@@ -161,11 +183,12 @@ def check_file(path, signals, rel):
         inner = inner.strip()
         if not inner:
             continue
-        # 跳过 bind() 等链式调用（参数个数会被 bind 改变）
-        if "bind(" in inner or ".bind" in inner:
+        # bind() 会把参数**追加在信号参数后面** ⇒ 期望个数要把 bind 的一起算上
+        inner, bound = split_bind(inner)
+        if not inner:
             continue
+        want += bound
 
-        head = inner.split(",")[0].strip() if inner.startswith("func") else inner
         # 具名方法
         if re.fullmatch(r"[A-Za-z_]\w*", inner):
             if inner not in funcs:
@@ -173,8 +196,9 @@ def check_file(path, signals, rel):
             total, required = funcs[inner]
             if not arity_ok(total, required, want):
                 problems.append(
-                    "%s:%d  %s.connect(%s) —— 回调必填 %d / 共 %d 个参数，信号声明是 %d 个"
-                    % (rel, line_of(m.start()), name, inner, required, total, want))
+                    "%s:%d  %s.connect(%s) —— 回调必填 %d / 共 %d 个参数，信号声明是 %d 个%s"
+                    % (rel, line_of(m.start()), name, inner, required, total,
+                       declared[0], "（含 bind 的 %d 个）" % bound if bound else ""))
         # lambda
         elif inner.startswith("func"):
             lm = re.match(r"func\s*\(", inner)
