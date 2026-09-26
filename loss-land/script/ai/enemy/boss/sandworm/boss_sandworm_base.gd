@@ -18,6 +18,10 @@
 #   3. **判距离只走 player_body() / player_distance()**，绝不读 player 根节点
 #      （根节点永不位移，读它得到的距离恒等于"出生点→Boss"，2026-09-22
 #       已经在采集判定上炸过一次）。
+#   4. **受击窗口 = "露出地面"的那一段**（露头之前摇 → 判定 → 后摇；钻回地底就关）。
+#      它平时在地下潜行，受击碰撞体也一起关着 ⇒ 玩家**看得见但打不到**。
+#      判据只有 _is_surfaced() 一处，碰撞层开关与占位美术的埋深都从它派生 ——
+#      三者共用一个判据，就不会出现"看着在地上却打不到"这种自相矛盾。
 #
 # 与现有系统的边界：
 #   - **不进 "enemy" 组**，用 "boss" 组：
@@ -54,6 +58,10 @@ signal boss_gone(boss_id: StringName)
 
 @export_group("数值")
 @export var max_health: int = 900
+## 相位分界线：血量比例 > 这个值用表 1，否则用表 2（规格 2.4）。
+## ⚠ 早先沙虫脚本里放过一个同名的 `const PHASE_LINE`，但本函数当时把 0.5 写死了
+##   ⇒ 改那个 const 根本不生效（已删）。现在它是唯一的真值来源。
+@export var phase_line: float = 0.5
 ## 追击速度。标尺：玩家满速 5.0（饥饿 ×0.9、低电量 ×0.7 ⇒ 最低 3.15）、史莱姆 1.5。
 ## 2026-09-25 从 4.0 降到 3.4：4.0 只比满速玩家慢 1 m/s，**低电量时还比玩家快**，
 ## 玩家反馈"逃不掉"。3.4 让满速能明显甩开，虚弱状态仍甩不开（脱身靠领地判定）。
@@ -80,7 +88,11 @@ signal boss_gone(boss_id: StringName)
 @export var emerge_time: float = 1.6
 ## 待机时埋在"地下"多深（占位美术的视觉表达）
 @export var buried_depth: float = 3.2
-## 沉下去 / 浮上来的速度
+## **潜地移动**时露头的深度（占位美术）。比 buried_depth 浅得多 ⇒ 地面上露出一截背脊。
+## 追击/逃走的全过程玩家都看得见它往哪跑，但受击碰撞体是关的 ——
+## 这就是"看得见、打不到"的那半边，也是玩家能预判它从哪个方向冒头的前提。
+@export var travel_depth: float = 1.9
+## 沉下去 / 浮上来的速度（冒头与钻回的手感都由它决定，6.0 ⇒ 约 0.3 s 完成）
 @export var rise_speed: float = 6.0
 
 @export_group("占位外观")
@@ -116,6 +128,16 @@ var _move_dir: Vector3 = Vector3.ZERO
 var _attack: BossSandwormAttack = null
 var _attack_index: int = -1
 var _strike_done: bool = false
+## 本招的判定圆心。aims_at_player 的招在**施放那一刻**取一次玩家位置并记住
+## （每帧重算的话圈会跟着玩家跑，变成必中）；其余招只在判定时读当前位置。
+var _strike_origin: Vector3 = Vector3.ZERO
+## 顺序轮转的"下一招"指针（表 1：①②③；表 2：④①②③）
+var _rotation_index: int = 0
+## 上一帧的表号（1/2）。换表要把轮转指针归零，否则表 2 的顺序读不出"4123"
+var _phase_cache: int = 1
+## "露头时可被打"的碰撞层。**从场景读**（sandworm.tscn 写 8 = layer 4），
+## 不硬编码 —— 免得场景和脚本各写一份、改漏一处。
+var _hit_layer: int = 0
 var _cooldowns: Dictionary = {}
 var _phase1_attacks: Array[BossSandwormAttack] = []
 var _phase2_attacks: Array[BossSandwormAttack] = []
@@ -127,6 +149,11 @@ var _jaw_material: StandardMaterial3D = null
 var _hurt_flash: float = 0.0
 var _debug_timer: float = 0.0
 var _gone_emitted: bool = false
+## 地面预警圈（流沙 / 吐沙落点）。**top_level = true** 挂在世界坐标上，
+## 不跟着沙虫走 —— 否则圈会追着玩家跑，等于取消了"跑出去就能躲"。
+var _zone_fx: Node3D = null
+var _zone_mesh: CylinderMesh = null
+var _zone_mat: StandardMaterial3D = null
 
 # ============================================
 # 生命周期
@@ -136,15 +163,22 @@ func _ready() -> void:
 	_home = global_position
 	_gravity = float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8))
 	_health = maxi(max_health, 1)
+	# 场景里配的层 = "露头时可被打"的层，记下来；埋起来时置 0，露头时还原
+	_hit_layer = collision_layer
+	if _hit_layer == 0:
+		push_warning("[%s] 场景的 collision_layer 是 0 ⇒ 它永远打不到也打不着。"
+			% display_name)
 	# 另立 "boss" 组，理由见文件头
 	add_to_group("boss")
 	_build_attacks()
 	_reset_cooldowns()
+	_phase_cache = current_phase()
 	_visual = get_node_or_null("Visual") as Node3D
 	_setup_placeholder_material()
 	_state = BossSandwormState.State.DORMANT
 	_state_time = 0.0
 	_refresh_body_color()
+	_refresh_hitbox()
 	_connect_player_signals()
 	_debug("就绪：巢穴 %s，血量 %d" % [str(_home), _health])
 
@@ -216,8 +250,40 @@ func _set_state(new_state: int) -> void:
 	# 离开招式三段就丢掉当前招 —— 于是"招式播到一半换表"不可能发生
 	if not BossSandwormState.is_attack_phase(new_state):
 		_attack = null
+		_hide_zone()
 	_refresh_body_color()
+	# 受击碰撞体跟着状态走：露头才开（唯一入口，见 _refresh_hitbox）
+	_refresh_hitbox()
 	state_changed.emit(previous, new_state)
+
+
+## 此刻是否"露出地面" —— 受击窗口、碰撞层开关、占位美术的埋深都从这一个判据派生。
+##   · 冒头前摇（surfaces_in_telegraph = true 的招）→ 是
+##   · 判定 / 后摇 → 是（"钻回地底"发生在退出 RECOVER 的那一帧）
+##   · 潜地移动 / 待机 / 登场 / 逃走 / ③④的地下调度 → 否
+##
+## ⚠ ③流沙陷落 与 ④潜行突袭 的 state 也是 TELEGRAPH，但它们**在地下动作**
+##   （布置流沙 / 高速突进），所以前摇期间玩家打不到它 ——
+##   这两招的解法是走位躲，不是"在它冒头前先打它一顿"。
+func _is_surfaced() -> bool:
+	match _state:
+		BossSandwormState.State.TELEGRAPH:
+			return _attack != null and _attack.surfaces_in_telegraph
+		BossSandwormState.State.STRIKE, BossSandwormState.State.RECOVER:
+			return true
+		_:
+			return false
+
+
+## 受击碰撞体的开关。切的是 **collision_layer**、不是 collision_mask：
+##   · collision_mask = 2 不动 ⇒ 它照样站在地面上，不会掉进地底；
+##   · layer 置 0 ⇒ 玩家挥砍的 intersect_shape（mask = 全部层）查不到它，
+##     于是"打不到"是字面意义上打不到，而不只是靠 take_damage 里提前 return；
+##   · 顺带没有"看不见的墙"：埋着的时候它不占碰撞层，玩家能从它上面直接走过去。
+## 工程内同款做法见 resources/resource_manager.gd 隐藏建筑那段（layer 2 ↔ 0）。
+## 只在状态切换时调用一次，不必每帧刷。
+func _refresh_hitbox() -> void:
+	collision_layer = _hit_layer if _is_surfaced() else 0
 
 
 ## 待机：玩家进圈并**停留**够 trigger_dwell 才登场
@@ -285,8 +351,14 @@ func _process_attack(delta: float) -> void:
 
 	match _state:
 		BossSandwormState.State.TELEGRAPH:
+			# 区域招（流沙陷落）：前摇这几秒**持续**把圈内单位拖向圆心，
+			# 同时把地面圈画出来。玩家要在这段时间里逆着拉力走出去才能躲开。
+			if _attack.has_zone():
+				_pull_into_zone(delta, _attack)
+			if _attack.aims_at_player or _attack.has_zone():
+				_update_zone_fx(_attack)
 			if _state_time >= _attack.telegraph_time:
-				_set_state(BossSandwormState.State.STRIKE)
+				_enter_strike()
 		BossSandwormState.State.STRIKE:
 			# 判定只做一次（不是每帧扣血）
 			if not _strike_done:
@@ -400,6 +472,7 @@ func _check_leash(delta: float) -> bool:
 
 ## 决策点执行一次：选到招就出招（返回 true），没招就交回 CHASE（返回 false）
 func _decide() -> bool:
+	_sync_rotation_with_phase()
 	var next: BossSandwormAttack = _pick_next_attack()
 	if next == null:
 		return false
@@ -407,21 +480,52 @@ func _decide() -> bool:
 	return true
 
 
-## 从上往下取第一条**同时**满足「不在 CD」且「玩家在射程内」的招。
-## 扫不到 → null（调用方回 CHASE）。注意这是**固定优先级轮转**、不是随机：
-## 第 1 招永远优先，第 3 招只在 1、2 都在 CD 时才出场。
+## 换表就把轮转指针归零。表 2 的顺序是 ④①②③，必须**从 ④ 起手**才对得上"4123"；
+## 不归零的话血线一破就从表 2 的中间某招续下去，顺序读不出来。
+## 只在这里（决策点）判，招式播到一半不换表 —— 与 _current_table() 的规则一致。
+func _sync_rotation_with_phase() -> void:
+	var phase: int = current_phase()
+	if phase == _phase_cache:
+		return
+	_phase_cache = phase
+	_rotation_index = 0
+
+
+## 按**固定顺序轮转**取招（表 1：①②③；表 2：④①②③）。
+##
+## 与旧版"从上往下取第一条可用"的区别：旧版第 1 招永远优先，玩家只要把距离拉开
+## 就只会见到远程招；新版是背板式轮转 —— 打完①才轮到②，顺序是可预期的。
+##
+## 三条规则：
+##   · 轮到的招**够不着**（> max_range）⇒ 返回 null 且**不推进指针**。
+##     调用方还在 CHASE ⇒ 它会继续潜行逼近，追进射程再放（＝"潜近再放"）。
+##   · 轮到的招**在 CD / 太近不该放**（< min_range）⇒ 顺延到下一条，不卡住。
+##   · 一圈都轮不到 ⇒ 返回 null，继续贴身追（原案的兜底，不许原地发呆）。
+##
+## ⚠ min_range 的陷阱：严格顺序 + 够不着就等 ⇒ 一旦给某招设 min_range > 0，
+##   玩家贴脸时它会"永远够不着"，于是站着不动。本表所有招的 min_range 都是 0，
+##   靠这一条避开；将来真要给某招加 min_range，请同时补"太近就顺延"的分支。
 func _pick_next_attack() -> BossSandwormAttack:
 	var table: Array[BossSandwormAttack] = _current_table()
+	var count: int = table.size()
+	if count == 0:
+		_attack_index = -1
+		return null
 	var distance: float = player_distance()
-	for i in range(table.size()):
-		var candidate: BossSandwormAttack = table[i]
+	for step in range(count):
+		var index: int = (_rotation_index + step) % count
+		var candidate: BossSandwormAttack = table[index]
 		if candidate == null:
 			continue
 		if cooldown_left(candidate.attack_id) > 0.0:
 			continue
-		if not candidate.in_range(distance):
+		if distance > candidate.max_range:
+			_attack_index = -1
+			return null
+		if distance < candidate.min_range:
 			continue
-		_attack_index = i
+		_rotation_index = (index + 1) % count
+		_attack_index = index
 		return candidate
 	_attack_index = -1
 	return null
@@ -429,7 +533,7 @@ func _pick_next_attack() -> BossSandwormAttack:
 
 ## 按血量选表。**相位切换只发生在决策点** —— 招式播到一半绝不换表
 func _current_table() -> Array[BossSandwormAttack]:
-	if max_health > 0 and float(_health) / float(max_health) > 0.5:
+	if max_health > 0 and float(_health) / float(max_health) > phase_line:
 		return _phase1_attacks
 	return _phase2_attacks
 
@@ -437,9 +541,28 @@ func _current_table() -> Array[BossSandwormAttack]:
 func _start_attack(attack: BossSandwormAttack) -> void:
 	_attack = attack
 	_strike_done = false
+	# 落点必须在**施放这一刻**算一次然后钉住（见 _strike_origin 的说明）
+	_strike_origin = attack.strike_origin_from(global_position, player_position())
 	attack_started.emit(attack.attack_id)
 	_debug("选招 %s（%s）" % [attack.attack_id, attack.describe()])
+	if attack.aims_at_player or attack.has_zone():
+		_show_zone(attack, _strike_origin)
 	_set_state(BossSandwormState.State.TELEGRAPH)
+
+
+## 进入判定段。区域招在这里**破土而出**：沙虫瞬移到圆心 ——
+##   ① "从圆心冒出吞噬"的表现就是它本人出现在圈心；
+##   ② 于是判定半径天然就是"离圆心多远"，不用额外记一个判定原点；
+##   ③ 露头 → _set_state 里顺带把受击碰撞体打开（玩家终于能打了）。
+func _enter_strike() -> void:
+	var attack: BossSandwormAttack = _attack
+	if attack != null and attack.has_zone():
+		global_position = Vector3(_strike_origin.x, global_position.y, _strike_origin.z)
+		_move_dir = Vector3.ZERO
+		velocity.x = 0.0
+		velocity.z = 0.0
+	_hide_zone()
+	_set_state(BossSandwormState.State.STRIKE)
 
 
 ## 判定生效：玩家在判定半径内才扣血。用玩家**本体**（player/Physics）算距离
@@ -457,11 +580,16 @@ func _apply_attack_damage() -> void:
 	var attack: BossSandwormAttack = _attack
 	if attack == null:
 		return
+	# 区域招（流沙吞噬）判的是"圈里还有谁"，不是"玩家在不在嘴边上"
+	if attack.has_zone():
+		_apply_zone_devour(attack)
+		return
 	var body: Node3D = player_body()
 	if body == null or not player_alive():
 		_debug("招式 %s 落空（玩家不在场）" % attack.attack_id)
 		return
-	var distance: float = _horizontal_distance(global_position, body.global_position)
+	var origin: Vector3 = _damage_origin(attack)
+	var distance: float = _horizontal_distance(origin, body.global_position)
 	if distance > attack.radius:
 		_debug("招式 %s 落空（玩家 %.1f m 在 %.1f m 判定外）"
 			% [attack.attack_id, distance, attack.radius])
@@ -474,12 +602,51 @@ func _apply_attack_damage() -> void:
 	attack_landed.emit(attack.attack_id, attack.damage)
 	_debug("招式 %s 命中玩家，扣 %d" % [attack.attack_id, attack.damage])
 
+
+## 判定圆心：钉死的落点（aims_at_player）还是"此刻沙虫自己站的地方"。
+## ⚠ 后者不能用施放时的快照 —— ④潜行突袭在前摇里一路高速突进，
+##   判定要落在它**咬下去那一刻**的位置上，否则它会咬到身后的空气。
+func _damage_origin(attack: BossSandwormAttack) -> Vector3:
+	if attack.aims_at_player:
+		return _strike_origin
+	return global_position
+
+
+## 流沙吞噬：圈内**所有**单位各挨一次（玩家 + 其他生物），没躲出去就吃满。
+## 判定圆心就是落点 —— 破土时沙虫已经瞬移到圆心（见 _enter_strike），
+## 所以"离圆心多远"和"离沙虫多远"是同一个数，直接复用 radius。
+##
+## ⚠ 同 _apply_attack_damage：body.call 可能同步把玩家打死 ⇒ 状态机被推走 ⇒
+##    _attack 变 null。这里靠两件事顶住：① 全程只用局部 attack；
+##    ② _pullable_bodies() 返回的是**新数组**（快照），遍历不会被中途改坏。
+func _apply_zone_devour(attack: BossSandwormAttack) -> void:
+	var origin: Vector3 = _damage_origin(attack)
+	var caught: int = 0
+	for body in _pullable_bodies():
+		if not is_instance_valid(body):
+			continue
+		if _horizontal_distance(origin, body.global_position) > attack.radius:
+			continue
+		if not body.has_method("take_damage"):
+			continue
+		body.call("take_damage", attack.damage)
+		caught += 1
+	if caught > 0:
+		attack_landed.emit(attack.attack_id, attack.damage)
+		_debug("招式 %s 吞噬了 %d 个目标，各扣 %d"
+			% [attack.attack_id, caught, attack.damage])
+	else:
+		_debug("招式 %s 落空（圈里一个单位都没有）" % attack.attack_id)
+
 # ============================================
 # 受伤与濒死
 # ============================================
 
 ## 受伤入口。签名必须与 Slime / Drone / 玩家 Physics 一致
 ## （玩家攻击是**沿父链按方法名找 take_damage**，改名就找不到承伤体了）。
+##
+## 三道门：① 这场架已经输掉（濒死保命 / 已退场）；② 状态本身不该收（待机 / 登场 / 脱战）；
+## ③ **此刻没露头**（埋在地下潜行）—— 这一条是运行时状态，静态谓词表达不了。
 func take_damage(damage: int) -> void:
 	# ⚠ 第一行就拦。玩家一次挥砍用 intersect_shape(..., 10) 查最多 10 个碰撞体，
 	#   进入 FALLEN 的**同一帧**完全可能再来第二段伤害把保底的 1 点打光。
@@ -487,13 +654,21 @@ func take_damage(damage: int) -> void:
 		return
 	if not BossSandwormState.can_be_hurt(_state):
 		return
+	if not _is_surfaced():
+		return
+	_apply_damage(damage)
+
+
+## 真正扣血的那一段（take_damage 与 debug_damage_to 共用）。
+##
+## ⚠ "保留最后 1 点生命"这一步必须发生在**扣血函数内部**，不是"等主循环回头查到
+##   血量等于 1"：一次扣 10、血量剩 5 → -5，那时"用表 1 / 用表 2 / 濒死"
+##   三个分支一个都不命中，状态机会卡死。
+func _apply_damage(damage: int) -> void:
 	if damage <= 0:
 		return
 	_health -= damage
 	if _health <= 0:
-		# 保留最后 1 点生命 —— 注意这一步发生在 take_damage **内部**，
-		# 不是"等主循环回头查到血量等于 1"（一次扣 10、血量剩 5 → -5，
-		# 那时" >50% / 1<x<50% / ==1 " 三个分支一个都不命中，状态机会卡死）
 		_health = 1
 		health_changed.emit(_health, max_health)
 		_enter_fallen()
@@ -656,6 +831,8 @@ func _reset_cooldowns() -> void:
 	_cooldowns.clear()
 	_seed_cooldown_table(_phase1_attacks)
 	_seed_cooldown_table(_phase2_attacks)
+	# 每次"开一场新架"（就绪 / 回巢后再登场）都从①重新起手，顺序才可背板
+	_rotation_index = 0
 
 
 func _seed_cooldown_table(table: Array[BossSandwormAttack]) -> void:
@@ -664,6 +841,132 @@ func _seed_cooldown_table(table: Array[BossSandwormAttack]) -> void:
 			continue
 		if not _cooldowns.has(attack.attack_id):
 			_cooldowns[attack.attack_id] = 0.0
+
+# ============================================
+# 地面区域（流沙陷落 / 吐沙的落点）
+#
+# 只用在"落点在玩家身上"的招上（aims_at_player / zone_radius）。两件事必须钉死：
+#   ① 圆心在**施放那一刻**取一次就固定（存进 _strike_origin）——
+#      每帧重算会变成"圈跟着玩家跑"，那就完全没有躲的余地了；
+#   ② 圈是 top_level 的世界节点，不能挂在 Visual 底下 —— 否则它跟着沙虫一起走。
+# ============================================
+
+## 会被拉向圆心的单位。用**组名**遍历，而不是物理形状查询：
+##   · 玩家的本体是 player 节点的 Physics 子节点，不是根节点
+##     （物理查询拿到根节点，位置恒等于出生点 —— 2026-09-22 在采集判定上炸过同款）；
+##   · 测试用的假玩家根本没有 CollisionShape，物理查询根本扫不到它。
+## "其他生物"就是 enemy 组，两边一起收。
+func _pullable_bodies() -> Array[Node3D]:
+	var bodies: Array[Node3D] = []
+	_collect_pullable(get_tree().get_nodes_in_group(&"player"), bodies)
+	_collect_pullable(get_tree().get_nodes_in_group(&"enemy"), bodies)
+	return bodies
+
+
+func _collect_pullable(nodes: Array, out: Array[Node3D]) -> void:
+	for node in nodes:
+		var body: Node3D = _resolve_body_of(node)
+		if body != null and body != self:
+			out.append(body)
+
+
+## 从"组里的那个节点"找到真正该被拖动的 3D 本体
+func _resolve_body_of(node: Node) -> Node3D:
+	if node is CharacterBody3D:
+		return node as Node3D
+	var physics: Node = node.get_node_or_null("Physics")
+	if physics is Node3D:
+		return physics as Node3D
+	return null
+
+
+## 前摇期间把圈内单位拖向圆心。**直接改 global_position**、不走 velocity ——
+## 玩家的控制器每帧自己重算 velocity，塞进去的初速立刻会被覆盖掉。
+## 拉力 2.6 对玩家满速 5.0 ⇒ 逆着走能出来、站着不动被拖进中心，
+## 这就是流沙"逃得掉、但很吃力"的手感来源。
+func _pull_into_zone(delta: float, attack: BossSandwormAttack) -> void:
+	if attack.zone_pull_speed <= 0.0:
+		return
+	var center: Vector3 = _strike_origin
+	var step: float = attack.zone_pull_speed * delta
+	for body in _pullable_bodies():
+		if not is_instance_valid(body):
+			continue
+		var position: Vector3 = body.global_position
+		var dx: float = center.x - position.x
+		var dz: float = center.z - position.z
+		var distance: float = sqrt(dx * dx + dz * dz)
+		if distance > attack.zone_radius:
+			continue
+		if distance < 0.0001 or distance <= step:
+			body.global_position = Vector3(center.x, position.y, center.z)
+			continue
+		body.global_position = Vector3(
+			position.x + dx / distance * step,
+			position.y,
+			position.z + dz / distance * step)
+
+
+## 懒创建预警圈：只建一次、靠 visible 开关复用，
+## 免得每次出招都新建一个网格 + 新建一份材质。
+func _ensure_zone_fx() -> void:
+	if _zone_fx != null and is_instance_valid(_zone_fx):
+		return
+	_zone_mesh = CylinderMesh.new()
+	_zone_mesh.height = 0.06
+	_zone_mesh.radial_segments = 48
+	_zone_mat = StandardMaterial3D.new()
+	# 与其它占位网格一致走 UNSHADED：受光材质在本工程的环境光下会被抬亮约 2.2 倍
+	_zone_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_zone_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var disc: MeshInstance3D = MeshInstance3D.new()
+	disc.name = "Disc"
+	disc.mesh = _zone_mesh
+	disc.material_override = _zone_mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var root: Node3D = Node3D.new()
+	root.name = "ZoneFx"
+	# top_level ⇒ 它钉在世界坐标上，沙虫一边追一边走时圈不跟着跑
+	root.top_level = true
+	root.visible = false
+	root.add_child(disc)
+	add_child(root)
+	_zone_fx = root
+
+
+func _show_zone(attack: BossSandwormAttack, center: Vector3) -> void:
+	var radius: float = attack.marker_radius()
+	if radius <= 0.0:
+		return
+	_ensure_zone_fx()
+	if _zone_fx == null:
+		return
+	_zone_mesh.top_radius = radius
+	_zone_mesh.bottom_radius = radius
+	_zone_mat.albedo_color = attack.zone_color
+	# top_level ⇒ position 就是世界坐标
+	_zone_fx.position = Vector3(center.x, center.y + 0.06, center.z)
+	_zone_fx.visible = true
+
+
+## 越接近爆发越暗、越不透明 —— 给玩家一个"还剩多久"的读数
+func _update_zone_fx(attack: BossSandwormAttack) -> void:
+	if _zone_fx == null or not _zone_fx.visible:
+		return
+	var progress: float = 0.0
+	if attack.telegraph_time > 0.0:
+		progress = clampf(_state_time / attack.telegraph_time, 0.0, 1.0)
+	var base: Color = attack.zone_color
+	var dim: float = 1.0 - 0.45 * progress
+	_zone_mat.albedo_color = Color(
+		base.r * dim, base.g * dim, base.b * dim,
+		clampf(base.a + 0.35 * progress, 0.0, 1.0))
+
+
+func _hide_zone() -> void:
+	if _zone_fx != null and is_instance_valid(_zone_fx):
+		_zone_fx.visible = false
+
 
 # ============================================
 # 表现（占位）
@@ -726,21 +1029,38 @@ func _refresh_body_color() -> void:
 		_jaw_material.albedo_color = color.darkened(jaw_darken)
 
 
-## 占位美术的"钻出沙面"：待机埋在 -buried_depth，登场期间抬到 0
+## 占位美术的"钻地"深度目标：
+##   · 待机 / 退场 / 地下筹备 → 整只埋掉（看不见）
+##   · 潜地移动（追击 / 逃走）→ 只露一截背脊（travel_depth）：
+##     "玩家看得见但打不到"就靠这一档 —— 看不见它往哪跑就没法预判它从哪冒头
+##   · 冒头前摇 / 判定 / 后摇 → 抬到 0（完全露出）
+## 口径与 _is_surfaced() 一致：露头的那几段才开受击碰撞体。
+func _visual_target_depth() -> float:
+	match _state:
+		BossSandwormState.State.TELEGRAPH:
+			if _attack != null and _attack.surfaces_in_telegraph:
+				return 0.0
+			return -buried_depth
+		BossSandwormState.State.STRIKE, BossSandwormState.State.RECOVER:
+			return 0.0
+		BossSandwormState.State.CHASE, BossSandwormState.State.RETREAT, BossSandwormState.State.FALLEN:
+			return -travel_depth
+		_:
+			return -buried_depth
+
+
+## 占位美术的浮沉：登场走插值（钻出沙面），其余朝目标深度匀速挪（rise_speed）。
 func _update_visual(delta: float) -> void:
 	if _visual == null:
 		return
 	var position: Vector3 = _visual.position
-	match _state:
-		BossSandwormState.State.EMERGING:
-			var t: float = 1.0
-			if emerge_time > 0.0:
-				t = clampf(_state_time / emerge_time, 0.0, 1.0)
-			position.y = lerpf(-buried_depth, 0.0, t)
-		BossSandwormState.State.DORMANT, BossSandwormState.State.GONE:
-			position.y = move_toward(position.y, -buried_depth, rise_speed * delta)
-		_:
-			position.y = move_toward(position.y, 0.0, rise_speed * delta)
+	if _state == BossSandwormState.State.EMERGING:
+		var t: float = 1.0
+		if emerge_time > 0.0:
+			t = clampf(_state_time / emerge_time, 0.0, 1.0)
+		position.y = lerpf(-buried_depth, 0.0, t)
+	else:
+		position.y = move_toward(position.y, _visual_target_depth(), rise_speed * delta)
 	_visual.position = position
 	_visual.visible = position.y > -buried_depth + 0.05
 
@@ -812,13 +1132,19 @@ func debug_wake() -> void:
 	_set_state(BossSandwormState.State.EMERGING)
 
 
-## 把血量打到指定值。**走正常受伤路径**，所以"保底 1 点 + 濒死"的规则照样生效：
-## debug_damage_to(0) → 血量打光 → 夹到 1 → 进 FALLEN（正是要测的那条路）
+## 把血量打到指定值（调试 / 测试用）。走同一条扣血路径 ⇒ "保底 1 点 + 濒死"
+## 的规则照样生效：debug_damage_to(0) → 血量打光 → 夹到 1 → 进 FALLEN（正是要测的那条路）。
+##
+## ⚠ 它**故意绕过"受击窗口"**：埋伏在地下时调试者也必须能把血打下去，
+##   否则"摆状态"就变成要看沙虫脸色的运气活（2026-09-26 加受击窗口时踩到）。
+##   濒死/退场（_untouchable）那条仍然拦 —— 那是"这场架已经结束"，不是窗口问题。
 func debug_damage_to(target_health: int) -> void:
+	if _untouchable:
+		return
 	var delta: int = _health - target_health
 	if delta <= 0:
 		return
-	take_damage(delta)
+	_apply_damage(delta)
 
 
 ## 把所有招式的冷却拉满（测"全表在 CD 时的兜底"：应当继续追击、不空放、不卡死）。
@@ -837,7 +1163,7 @@ func debug_set_all_cooldowns(seconds: float) -> void:
 ## 当前相位：1 = 血厚表，2 = 血少表。
 ## 注意它**只反映此刻按血量该用哪张表**；招式播到一半不会真的换表（见 _current_table 注释）
 func current_phase() -> int:
-	if max_health > 0 and float(_health) / float(max_health) > 0.5:
+	if max_health > 0 and float(_health) / float(max_health) > phase_line:
 		return 1
 	return 2
 

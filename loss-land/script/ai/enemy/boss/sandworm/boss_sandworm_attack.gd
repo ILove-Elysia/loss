@@ -48,8 +48,33 @@ extends Resource
 ## 这一招自己的冷却（每招一个计时器，不是全局一个）
 @export var cooldown: float = 5.0
 
+@export_group("落点与区域")
+## true ⇒ 判定圆心 = **施放瞬间玩家的位置**（吐沙 / 流沙这类"朝地面打"的招）；
+## false ⇒ 判定圆心 = Boss 自己（撕咬这类"咬在嘴上"的招）。
+##
+## ⚠ 老版本没有这个字段，于是 sand_spit 的 `max_range` 18 和 `radius` 1.8 互相打架：
+##   它只在玩家 5 m 外才被选中，却拿半径 1.8 去量"玩家↔Boss"的距离 ⇒ **永远打不中**。
+##   远程招必须把落点钉在玩家身上，而不是量 Boss 到玩家的距离。
+@export var aims_at_player: bool = false
+## > 0 ⇒ 本招在地面生成一个**圆形区域**：圈内单位被**持续拉向圆心**，计时结束才结算。
+## 0 ⇒ 普通招式。流沙陷落用 9.0。
+@export var zone_radius: float = 0.0
+## 区域内单位被拉向圆心的速度（m/s）。玩家满速 5.0（低电 3.15）
+## ⇒ 取 2.6 时"逆着走能出来"，但站着不动会被拖进中心。
+@export var zone_pull_speed: float = 2.6
+## 地面圈的颜色（占位表现，正式美术接入后由特效取代）
+@export var zone_color: Color = Color(0.62, 0.46, 0.20, 0.55)
+## 前摇期间**是否已经露头**。
+## true  ⇒ 标准三段：冒头（前摇）→ 出招（判定）→ 后摇 → 钻回地底。
+## false ⇒ 本招**在地下动作**（潜行冲刺 / 布置流沙），判定段才破土而出
+##         ⇒ 于是它的受击窗口只有「判定 + 后摇」，前摇期间玩家**打不到它**。
+## 沙虫：③流沙陷落、④潜行突袭 用 false；①②用 true。
+@export var surfaces_in_telegraph: bool = true
+
 @export_group("表现")
-## 前摇期间能不能移动（0 = 定身，1 = 全速追）。定身＝给玩家跑的机会
+## 前摇期间能不能移动（0 = 定身，1 = 全速追）。定身＝给玩家跑的机会。
+## ⚠ 本值对**三段全程**生效（前摇/判定/后摇都按它算移速）：
+##   ④潜行突袭靠它做"地下高速突进"（2.5 ⇒ 3.4 × 2.5 ≈ 8.5 m/s）。
 @export var move_scale: float = 0.0
 ## 前摇时的体色（给玩家"要来了"的视觉信号，正式美术接入后由动画取代）
 @export var telegraph_color: Color = Color(1.0, 0.42, 0.22)
@@ -76,6 +101,12 @@ static func make(data: Dictionary) -> BossSandwormAttack:
 	attack.cooldown = float(data.get("cooldown", attack.cooldown))
 	attack.move_scale = float(data.get("move_scale", attack.move_scale))
 	attack.telegraph_color = Color(data.get("telegraph_color", attack.telegraph_color))
+	attack.aims_at_player = bool(data.get("aims_at_player", attack.aims_at_player))
+	attack.zone_radius = float(data.get("zone_radius", attack.zone_radius))
+	attack.zone_pull_speed = float(data.get("zone_pull_speed", attack.zone_pull_speed))
+	attack.zone_color = Color(data.get("zone_color", attack.zone_color))
+	attack.surfaces_in_telegraph = bool(
+		data.get("surfaces_in_telegraph", attack.surfaces_in_telegraph))
 	return attack
 
 # ============================================
@@ -90,11 +121,35 @@ func total_time() -> float:
 func in_range(distance: float) -> bool:
 	return distance >= min_range and distance <= max_range
 
+## 这一招的预警圈画多大 —— 有区域就用区域半径，否则用判定半径。
+func marker_radius() -> float:
+	if zone_radius > 0.0:
+		return zone_radius
+	return radius
+
+
+## 有没有"圆形流沙区域"（会把圈内单位持续拉向圆心）
+func has_zone() -> bool:
+	return zone_radius > 0.0
+
+
+## 判定圆心该怎么算。**真正的落点要在施放那一刻取一次然后记住** ——
+## 区域招的圆心是钉死的，玩家跑出去就等于躲开了（这就是"可躲"的实现方式）。
+## ⚠ 别每帧重算：那样圈会跟着玩家跑，变成必中。
+func strike_origin_from(boss_position: Vector3, player_position: Vector3) -> Vector3:
+	return player_position if aims_at_player else boss_position
+
+
 ## 调试面板用的一行描述
 func describe() -> String:
 	var label: String = display_name
 	if label.is_empty():
 		label = String(attack_id)
-	return "%s 伤害%d 射程%.1f~%.1f 前摇%.2f 后摇%.2f CD%.1f" % [
+	var line: String = "%s 伤害%d 射程%.1f~%.1f 前摇%.2f 后摇%.2f CD%.1f" % [
 		label, damage, min_range, max_range, telegraph_time, recover_time, cooldown,
 	]
+	if has_zone():
+		line += " 区域%.1fm(拉%.1f)" % [zone_radius, zone_pull_speed]
+	if not surfaces_in_telegraph:
+		line += " [地下筹备]"
+	return line

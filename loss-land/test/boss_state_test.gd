@@ -8,6 +8,9 @@
 # #13 是线上缺陷回归（2026-09-26「被沙虫打死后会报错」）：招式判定把玩家打死时，
 #     玩家 died 信号会**同步**把状态机推去 RETREAT、连带丢掉当前招，
 #     扣血函数回来后再读 _attack 就是空引用。规格里没有这一条，是修 bug 补的。
+# #14 / #15 是 2026-09-26 招式重做（①撕咬 ②吐沙 ③流沙陷落 ④潜行突袭、顺序轮转）补的：
+#     #14 受击窗口 = "露出地面"的那几段（③④在地下筹备/突进 ⇒ 前摇打不到）
+#     #15 顺序轮转：表 1 = ①②③，表 2 从 ④ 起手（读作 4123）
 #
 # 关键设计：
 #   · 直接实例化 Boss，不加载 map.tscn —— 那边一次地图生成要 12~20 秒；
@@ -223,8 +226,9 @@ func _run_cases() -> void:
 
 	print("[用例 8] 追击与脱战")
 	# 先把所有招式按在 CD 上：这一段要测的是**纯追击位移**与**领地判定**。
-	# 一旦让它出招，①前摇/后摇的 move_scale 会把位移吃掉（bite/sweep 近乎定身），
-	# 位移断言必假失败；②假玩家要是被咬死，走的就是"玩家死亡"那条分支，
+	# 一旦让它出招，三段期间的移速按 move_scale 算（①②③ 都是 0 = 完全定身，
+	# 只有 ④潜行突袭 会高速突进），位移断言必假失败；
+	# ②假玩家要是被咬死，走的就是"玩家死亡"那条分支，
 	# 领地判定根本没被执行。
 	# ⚠ 必须在这里（还没有招式在播的时候）就按：等招式播起来再按，
 	#   它结束时 reco 分支会把自己的 cooldown（如 sand_spit 的 9 s）写回去，
@@ -238,9 +242,15 @@ func _run_cases() -> void:
 	_check(distance_after < distance_before - 1.5,
 		"玩家在仇恨圈内 → 朝玩家位移（%.1f m → %.1f m）" % [distance_before, distance_after])
 
+	# 2026-09-26 起**潜地追击期间打不到它** —— 受击碰撞体也一起关着。
+	# 玩家的输出窗口只剩"露头出招"那几段，见用例 14。
+	var health_before_poke: int = _boss.get_health()
 	_boss.take_damage(200)
-	_check(_boss.get_health() < _boss.get_max_health(),
-		"追击状态下可被扣血（%d / %d）" % [_boss.get_health(), _boss.get_max_health()])
+	_check(_boss.get_health() == health_before_poke,
+		"潜地追击时打不到它（血量仍 %d / %d）"
+			% [_boss.get_health(), _boss.get_max_health()])
+	_check(_boss.collision_layer == 0,
+		"潜地时受击碰撞体是关的（collision_layer=%d）" % _boss.collision_layer)
 
 	# ① 领地内站多久都不脱战
 	_place_target_from_home(_boss.leash_radius * 0.9)
@@ -281,6 +291,71 @@ func _run_cases() -> void:
 		"回巢后**回满**血（%d / %d）" % [_boss.get_health(), _boss.get_max_health()])
 	_check(WorldState.get_flag(Sandworm.NEST_FLAG, 0) == 0,
 		"脱战**不写**世界状态（巢穴仍完好）")
+
+	print("[用例 14] 受击窗口：只有露出地面的那几段能被打")
+	# 两道判据、两道都断言：
+	#   ① take_damage 直接拦（静态谓词 can_be_hurt + 运行时的 _is_surfaced）
+	#   ② **受击碰撞体本身关着**（collision_layer = 0）—— 玩家挥砍走的是
+	#      intersect_shape，真正让玩家"打不到"的其实是②这一层，不是①。
+	_place_target_at(3.0)
+	_target.revive()
+	_boss.debug_set_all_cooldowns(0.0)
+	_boss.debug_wake()
+	var got_open_telegraph: bool = await _wait_for_state(
+		BossSandwormState.State.TELEGRAPH, 15.0)
+	_check(got_open_telegraph, "进入第一招的前摇")
+	_check(_boss.current_attack_id() == &"bite",
+		"表 1 第一招是①撕咬（实际 %s）" % _boss.current_attack_id())
+	var open_layer: int = _boss.collision_layer
+	_check(open_layer != 0, "①前摇已露头 ⇒ 受击碰撞体打开（layer=%d）" % open_layer)
+	var health_before_open: int = _boss.get_health()
+	_boss.take_damage(50)
+	_check(_boss.get_health() < health_before_open,
+		"露头期间可以被打（%d → %d）" % [health_before_open, _boss.get_health()])
+
+	# 按 ①②③ 的轮转次序等到 ③流沙陷落 —— 它的前摇在**地底下**筹备，窗口必须关着
+	var reached_quicksand: bool = false
+	var waited_buried: float = 0.0
+	while waited_buried < 45.0:
+		await physics_frame
+		waited_buried += 1.0 / float(Engine.physics_ticks_per_second)
+		if _boss.current_attack_id() == &"quicksand" and _boss.get_state() == BossSandwormState.State.TELEGRAPH:
+			reached_quicksand = true
+			break
+	_check(reached_quicksand, "按 ①②③ 的顺序轮到了③流沙陷落")
+	if reached_quicksand:
+		_check(_boss.collision_layer == 0, "③在地下筹备 ⇒ 受击碰撞体关着")
+		var health_before_buried: int = _boss.get_health()
+		_boss.take_damage(50)
+		_check(_boss.get_health() == health_before_buried,
+			"③的前摇打不到它（血量仍 %d）" % _boss.get_health())
+
+	print("[用例 15] 顺序轮转：表 1 = ①②③，表 2 从 ④ 起手（4123）")
+	# ⚠ 此刻正卡在③的前摇里，所以不能直接抓 current_attack_id()（抓到的是③自己）。
+	#   先把血打过 50%（顺带验"招式播到一半不换表"），再等一个**不是③**的招起手。
+	_boss.debug_damage_to(int(_boss.get_max_health() * 0.4))
+	_check(_boss.current_phase() == 2, "血量跌破 50% → 表 2")
+	_check(_boss.current_attack_id() == &"quicksand", "换表不打断正在播的③")
+	# 表 2 的顺序写作"④①②③"，而换表时轮转指针会归零 ⇒ 下一招必定是 ④。
+	# 这一条断言就把"4123"钉死了。
+	var first_of_phase2: StringName = &""
+	var waited_next: float = 0.0
+	while waited_next < 25.0:
+		await physics_frame
+		waited_next += 1.0 / float(Engine.physics_ticks_per_second)
+		var now_attack: StringName = _boss.current_attack_id()
+		if now_attack != &"" and now_attack != &"quicksand":
+			first_of_phase2 = now_attack
+			break
+	_check(first_of_phase2 == &"dash_bite",
+		"表 2 第一招是④潜行突袭（实际 %s）" % first_of_phase2)
+
+	# 收尾：让玩家死一次，把 Boss 送回待机（后面的用例都从 DORMANT 起手）
+	_target.kill()
+	await _step(0.2)
+	var home_before_next: bool = await _wait_for_state(BossSandwormState.State.DORMANT, 30.0)
+	_check(home_before_next, "收尾：回巢回到待机")
+	_target.revive()
 
 	print("[用例 9] 玩家死亡 → 走同一条脱战路径")
 	_place_target_at(3.0)
@@ -375,6 +450,8 @@ func _run_cases() -> void:
 	_check(saw_chase, "没有可用招时留在追击态继续贴身（不卡死）")
 
 	print("[用例 11] 相位切换只发生在决策点")
+	# 顺带把假玩家补满：血量见底会让 Boss 走脱战分支，后面的断言就没得测了
+	_target.revive()
 	_boss.debug_set_all_cooldowns(0.0)
 	var phase_at_full: int = _boss.current_phase()
 	_check(phase_at_full == 1,
@@ -396,6 +473,8 @@ func _run_cases() -> void:
 
 	print("[用例 12] 招式三段时序：伤害只发生在判定段，且每招只扣一次")
 	_place_target_at(3.0)
+	# 同样先补满：这一条要连续观察 5 秒的出手，玩家中途死掉会打断序列
+	_target.revive()
 	# 逐帧观察一串招式，记录"伤害增长的那一刻，状态是哪一段"。
 	# ⚠ 不要写成"检测到招式三段 → 等 telegraph_time 再断言没扣血"：
 	#   检测到的那一招可能已经播了一半（上一轮遗留），窗口算不准。
@@ -424,6 +503,18 @@ func _run_cases() -> void:
 	_check(hits_in_recover == 0, "后摇期间不重复扣血")
 
 	print("[用例 3] 濒死：保底 1 点生命 + 永久无敌")
+	# ⚠ 必须等它**露头**再打：潜地期间的 take_damage 会被受击窗口挡掉（见用例 14），
+	#   而这一条要走的正是"真刀真枪打上去"的那条路（不是 debug_damage_to）。
+	#   判据直接读 collision_layer —— 它和受击窗口是同一个开关，不必另开测试接口。
+	var exposed: bool = false
+	var waited_exposed: float = 0.0
+	while waited_exposed < 25.0:
+		await physics_frame
+		waited_exposed += 1.0 / float(Engine.physics_ticks_per_second)
+		if _boss.collision_layer != 0:
+			exposed = true
+			break
+	_check(exposed, "等到它露头（受击碰撞体打开）")
 	_boss.take_damage(999999)
 	_check(_boss.get_health() == 1, "血量停在 1（实际 %d）" % _boss.get_health())
 	_check(_boss.get_state() == BossSandwormState.State.FALLEN, "进入濒死逃走")

@@ -25,7 +25,7 @@ extends RefCounted
 enum State {
 	DORMANT,    ## 待机：在巢穴里/在树上，玩家没来。不可受伤
 	EMERGING,   ## 登场演出：钻出沙面 / 降落。不可受伤
-	CHASE,      ## 追击：玩家在仇恨圈内，朝玩家移动
+	CHASE,      ## 追击：玩家在仇恨圈内，**在地下**朝玩家移动。不可受伤
 	TELEGRAPH,  ## 前摇：给玩家躲的窗口（可被打，玩家的输出机会之一）
 	STRIKE,     ## 判定生效：真正扣血的那一段
 	RECOVER,    ## 后摇：硬直，玩家的主要输出窗口
@@ -84,11 +84,18 @@ static func from_save_id(id: StringName) -> int:
 # ============================================
 
 ## 该状态下 Boss 能不能被 take_damage 扣血。
-## 待机/登场/脱战/濒死/退场一律不可受伤 —— 这些状态下它要么不在场上、
+##
+## **追击（CHASE）不可受伤**：沙虫平时在地下潜行，只有露头出招的那几段才打开
+## 受击碰撞体。待机/登场/脱战/濒死/退场同样不可受伤 —— 这些状态下它要么不在场上、
 ## 要么已经"输了这场架"，再掉血会让状态机自相矛盾。
+##
+## ⚠ 本函数只是**静态规则**（"这个状态理论上开不开"）。有一条例外它表达不了：
+##   ③流沙陷落 / ④潜行突袭 的前摇也在地底下（本招 surfaces_in_telegraph = false），
+##   状态同样是 TELEGRAPH 却打不到它。运行时真正生效的判据是
+##   BossSandwormBase._is_surfaced()，它在本函数之上再叠这一层。
 static func can_be_hurt(state: int) -> bool:
 	match state:
-		State.CHASE, State.TELEGRAPH, State.STRIKE, State.RECOVER:
+		State.TELEGRAPH, State.STRIKE, State.RECOVER:
 			return true
 		_:
 			return false
