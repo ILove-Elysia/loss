@@ -25,7 +25,7 @@ const MOCK_TARGET := "res://test/mock_boss_target.gd"
 
 var _failures: int = 0
 var _checks: int = 0
-var _boss: BossBase = null
+var _boss: BossSandwormBase = null
 var _target: CharacterBody3D = null
 ## 用例 13 用：数 attack_landed 发了几次。
 ## 这一条是**功能性判据**，不是只看"有没有报错"——旧代码在重入处直接中断，
@@ -89,9 +89,9 @@ func _build_world() -> void:
 		push_error("找不到 Boss 场景：%s" % BOSS_SCENE)
 		quit(1)
 		return
-	_boss = packed.instantiate() as BossBase
+	_boss = packed.instantiate() as BossSandwormBase
 	if _boss == null:
-		push_error("Boss 场景的根节点不是 BossBase（脚本可能解析失败）")
+		push_error("Boss 场景的根节点不是 BossSandwormBase（脚本可能解析失败）")
 		quit(1)
 		return
 	root.add_child(_boss)
@@ -170,7 +170,7 @@ func _wait_for_battle(timeout: float) -> bool:
 	var elapsed: float = 0.0
 	while elapsed < timeout:
 		var state: int = _boss.get_state()
-		if state == BossState.State.CHASE or BossState.is_attack_phase(state):
+		if state == BossSandwormState.State.CHASE or BossSandwormState.is_attack_phase(state):
 			return true
 		await physics_frame
 		elapsed += per_frame
@@ -182,7 +182,7 @@ func _wait_for_attack_phase(timeout: float) -> bool:
 	var per_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
 	var elapsed: float = 0.0
 	while elapsed < timeout:
-		if BossState.is_attack_phase(_boss.get_state()):
+		if BossSandwormState.is_attack_phase(_boss.get_state()):
 			return true
 		await physics_frame
 		elapsed += per_frame
@@ -199,27 +199,27 @@ func _run_cases() -> void:
 
 	_place_target_at(60.0)
 	await _step(0.4)
-	_check(_boss.get_state() == BossState.State.DORMANT, "玩家在圈外时保持待机")
+	_check(_boss.get_state() == BossSandwormState.State.DORMANT, "玩家在圈外时保持待机")
 
 	_place_target_at(10.0)
 	await _step(_boss.trigger_dwell * 0.5)
-	_check(_boss.get_state() == BossState.State.DORMANT,
+	_check(_boss.get_state() == BossSandwormState.State.DORMANT,
 		"进圈不满 %.1fs 仍是待机" % _boss.trigger_dwell)
 
 	_place_target_at(20.0)
 	await _step(_boss.trigger_dwell + 0.4)
-	_check(_boss.get_state() == BossState.State.DORMANT, "中途出圈 → 计时清零、不出场")
+	_check(_boss.get_state() == BossSandwormState.State.DORMANT, "中途出圈 → 计时清零、不出场")
 
 	_place_target_at(10.0)
 	await _step(_boss.trigger_dwell + 0.15)
-	_check(_boss.get_state() == BossState.State.EMERGING, "停留够时长 → 登场")
-	_check(not BossState.can_be_hurt(_boss.get_state()), "登场期间不可受伤")
+	_check(_boss.get_state() == BossSandwormState.State.EMERGING, "停留够时长 → 登场")
+	_check(not BossSandwormState.can_be_hurt(_boss.get_state()), "登场期间不可受伤")
 
 	# 挪到所有招式射程外（免得一出场就出招），但**别出领地**：
 	# 领地判定量的是「玩家↔巢穴」，站到 leash_radius 外会直接把脱战计时打开。
 	_place_target_at(20.0)
 	await _step(_boss.emerge_time + 0.2)
-	_check(_boss.get_state() == BossState.State.CHASE, "登场结束 → 追击")
+	_check(_boss.get_state() == BossSandwormState.State.CHASE, "登场结束 → 追击")
 
 	print("[用例 8] 追击与脱战")
 	# 先把所有招式按在 CD 上：这一段要测的是**纯追击位移**与**领地判定**。
@@ -245,7 +245,7 @@ func _run_cases() -> void:
 	# ① 领地内站多久都不脱战
 	_place_target_from_home(_boss.leash_radius * 0.9)
 	await _step(_boss.leash_time * 3.0)
-	_check(_boss.get_state() == BossState.State.CHASE,
+	_check(_boss.get_state() == BossSandwormState.State.CHASE,
 		"还在领地内（%.1f m < %.1f m）→ 追多久都不脱战"
 			% [_target_home_distance(), _boss.leash_radius])
 
@@ -258,7 +258,7 @@ func _run_cases() -> void:
 	_check(_boss_home_distance() <= _boss.leash_radius + 0.5,
 		"领地绳：沙虫被按在领地边缘（离巢穴 %.1f m ≤ %.1f m）"
 			% [_boss_home_distance(), _boss.leash_radius])
-	_check(_boss.get_state() == BossState.State.CHASE,
+	_check(_boss.get_state() == BossSandwormState.State.CHASE,
 		"领地绳生效期间仍在追击态（没卡死）")
 
 	# ③ 回领地内 → 计时清零（顺带验证"回圈就重置"，否则下一步会秒脱战）
@@ -269,13 +269,13 @@ func _run_cases() -> void:
 	# ④ 出领地：立刻计时，不满 leash_time 不走
 	_place_target_from_home(_boss.leash_radius + 12.0)
 	await _step(_boss.leash_time * 0.5)
-	_check(_boss.get_state() == BossState.State.CHASE,
+	_check(_boss.get_state() == BossSandwormState.State.CHASE,
 		"刚出领地不满 %.1fs 还不脱战" % _boss.leash_time)
 	await _step(_boss.leash_time * 0.5 + 0.3)
-	_check(_boss.get_state() == BossState.State.RETREAT, "出领地持续够久 → 脱战逃走")
+	_check(_boss.get_state() == BossSandwormState.State.RETREAT, "出领地持续够久 → 脱战逃走")
 
 	print("[用例 2] 脱战回巢：回满血 + 回待机（不推进世界）")
-	var got_home: bool = await _wait_for_state(BossState.State.DORMANT, 30.0)
+	var got_home: bool = await _wait_for_state(BossSandwormState.State.DORMANT, 30.0)
 	_check(got_home, "走回巢穴后回到待机")
 	_check(_boss.get_health() == _boss.get_max_health(),
 		"回巢后**回满**血（%d / %d）" % [_boss.get_health(), _boss.get_max_health()])
@@ -292,10 +292,10 @@ func _run_cases() -> void:
 	_target.kill()
 	await _step(0.2)
 	var state_after_death: int = _boss.get_state()
-	_check(state_after_death == BossState.State.RETREAT
-			or state_after_death == BossState.State.DORMANT,
-		"玩家一死，Boss 立刻撤离（当前 %s）" % BossState.label_of(state_after_death))
-	var home_again: bool = await _wait_for_state(BossState.State.DORMANT, 30.0)
+	_check(state_after_death == BossSandwormState.State.RETREAT
+			or state_after_death == BossSandwormState.State.DORMANT,
+		"玩家一死，Boss 立刻撤离（当前 %s）" % BossSandwormState.label_of(state_after_death))
+	var home_again: bool = await _wait_for_state(BossSandwormState.State.DORMANT, 30.0)
 	_check(home_again, "回巢后回到待机")
 	_check(_boss.get_health() == _boss.get_max_health(),
 		"玩家死亡这条路径同样**回满**血（%d → %d）" % [health_before_death, _boss.get_health()])
@@ -341,13 +341,13 @@ func _run_cases() -> void:
 		"打死玩家的那一击同样上报了 attack_landed（%d 次）" % _landed_hits)
 	# 命中那一刻状态就被重入改走了 —— 这一行要是崩溃，就是本轮修的 bug 复发
 	var state_after_hit: int = _boss.get_state()
-	_check(state_after_hit == BossState.State.RETREAT
-			or state_after_hit == BossState.State.DORMANT,
-		"被同步重入后落在合法状态（当前 %s）" % BossState.label_of(state_after_hit))
+	_check(state_after_hit == BossSandwormState.State.RETREAT
+			or state_after_hit == BossSandwormState.State.DORMANT,
+		"被同步重入后落在合法状态（当前 %s）" % BossSandwormState.label_of(state_after_hit))
 	_check(_boss.current_attack() == null,
 		"被打断的招式已丢弃（current_attack_id = '%s'）" % _boss.current_attack_id())
 	await _step(0.3)
-	var home_after_hit: bool = await _wait_for_state(BossState.State.DORMANT, 30.0)
+	var home_after_hit: bool = await _wait_for_state(BossSandwormState.State.DORMANT, 30.0)
 	_check(home_after_hit, "这一击之后照样回巢回待机（没有卡死在招式里）")
 	_check(_boss.get_health() == _boss.get_max_health(), "回巢回满血")
 	_boss.attack_landed.disconnect(_on_attack_landed)
@@ -359,17 +359,17 @@ func _run_cases() -> void:
 	_boss.debug_set_all_cooldowns(30.0)
 	var engaged_again: bool = await _wait_for_battle(10.0)
 	_check(engaged_again, "再次进入战斗")
-	var saw_attack: bool = BossState.is_attack_phase(_boss.get_state())
-	var saw_chase: bool = _boss.get_state() == BossState.State.CHASE
+	var saw_attack: bool = BossSandwormState.is_attack_phase(_boss.get_state())
+	var saw_chase: bool = _boss.get_state() == BossSandwormState.State.CHASE
 	var per_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
 	var waited: float = 0.0
 	while waited < 1.5:
 		await physics_frame
 		waited += per_frame
 		var state_now: int = _boss.get_state()
-		if BossState.is_attack_phase(state_now):
+		if BossSandwormState.is_attack_phase(state_now):
 			saw_attack = true
-		if state_now == BossState.State.CHASE:
+		if state_now == BossSandwormState.State.CHASE:
 			saw_chase = true
 	_check(not saw_attack, "全部招式在 CD 时一帧都不出招（不空放）")
 	_check(saw_chase, "没有可用招时留在追击态继续贴身（不卡死）")
@@ -413,11 +413,11 @@ func _run_cases() -> void:
 		if gained <= 0:
 			continue
 		var state_now: int = _boss.get_state()
-		if state_now == BossState.State.TELEGRAPH:
+		if state_now == BossSandwormState.State.TELEGRAPH:
 			hits_in_telegraph += 1
-		elif state_now == BossState.State.STRIKE:
+		elif state_now == BossSandwormState.State.STRIKE:
 			hits_in_strike += 1
-		elif state_now == BossState.State.RECOVER:
+		elif state_now == BossSandwormState.State.RECOVER:
 			hits_in_recover += 1
 	_check(hits_in_telegraph == 0, "前摇期间一次都没扣血（「可躲」成立的前提）")
 	_check(hits_in_strike >= 1, "判定段确实扣了血（观测到 %d 次）" % hits_in_strike)
@@ -426,17 +426,17 @@ func _run_cases() -> void:
 	print("[用例 3] 濒死：保底 1 点生命 + 永久无敌")
 	_boss.take_damage(999999)
 	_check(_boss.get_health() == 1, "血量停在 1（实际 %d）" % _boss.get_health())
-	_check(_boss.get_state() == BossState.State.FALLEN, "进入濒死逃走")
-	_check(not BossState.can_be_hurt(_boss.get_state()), "濒死期间不可受伤")
+	_check(_boss.get_state() == BossSandwormState.State.FALLEN, "进入濒死逃走")
+	_check(not BossSandwormState.can_be_hurt(_boss.get_state()), "濒死期间不可受伤")
 
 	print("[用例 4] 同帧多段伤害（玩家一次挥砍最多查 10 个碰撞体）")
 	_boss.take_damage(999999)
 	_boss.take_damage(999999)
 	_check(_boss.get_health() == 1, "第二、三段伤害被拦下（血量仍为 1）")
-	_check(_boss.get_state() == BossState.State.FALLEN, "状态没有被后续伤害改写")
+	_check(_boss.get_state() == BossSandwormState.State.FALLEN, "状态没有被后续伤害改写")
 
 	print("[用例 5] 退场推进世界")
-	var gone: bool = await _wait_for_state(BossState.State.GONE, 30.0)
+	var gone: bool = await _wait_for_state(BossSandwormState.State.GONE, 30.0)
 	_check(gone, "走完逃走路径 → 已退场")
 	_check(_boss.get_health() == 1, "退场后血量仍是 1（不是死）")
 	_check(WorldState.get_flag(Sandworm.NEST_FLAG, 0) == 1, "巢穴坍塌旗标已置 1")

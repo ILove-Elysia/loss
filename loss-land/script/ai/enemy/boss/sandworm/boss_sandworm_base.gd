@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/sandworm/boss_base.gd
+# script/ai/enemy/boss/sandworm/boss_sandworm_base.gd
 # ============================================
 # Boss 通用状态机骨架（三条 Boss 线共用）
 #
@@ -27,7 +27,7 @@
 #   - 存档走独立的 world.bosses 段（第 2 步做），不碰 _collect_enemies/_apply_enemies。
 # ============================================
 
-class_name BossBase
+class_name BossSandwormBase
 extends CharacterBody3D
 
 # ============================================
@@ -104,7 +104,7 @@ signal boss_gone(boss_id: StringName)
 # ============================================
 # 运行时状态
 # ============================================
-var _state: int = BossState.State.DORMANT
+var _state: int = BossSandwormState.State.DORMANT
 var _health: int = 0
 var _untouchable: bool = false
 var _home: Vector3 = Vector3.ZERO
@@ -113,12 +113,12 @@ var _state_time: float = 0.0
 var _trigger_timer: float = 0.0
 var _leash_timer: float = 0.0
 var _move_dir: Vector3 = Vector3.ZERO
-var _attack: BossAttack = null
+var _attack: BossSandwormAttack = null
 var _attack_index: int = -1
 var _strike_done: bool = false
 var _cooldowns: Dictionary = {}
-var _phase1_attacks: Array[BossAttack] = []
-var _phase2_attacks: Array[BossAttack] = []
+var _phase1_attacks: Array[BossSandwormAttack] = []
+var _phase2_attacks: Array[BossSandwormAttack] = []
 var _player_cache: Node3D = null
 var _died_hooked: bool = false
 var _visual: Node3D = null
@@ -142,7 +142,7 @@ func _ready() -> void:
 	_reset_cooldowns()
 	_visual = get_node_or_null("Visual") as Node3D
 	_setup_placeholder_material()
-	_state = BossState.State.DORMANT
+	_state = BossSandwormState.State.DORMANT
 	_state_time = 0.0
 	_refresh_body_color()
 	_connect_player_signals()
@@ -164,15 +164,15 @@ func _physics_process(delta: float) -> void:
 	_move_dir = Vector3.ZERO
 
 	match _state:
-		BossState.State.DORMANT:
+		BossSandwormState.State.DORMANT:
 			_process_dormant(delta)
-		BossState.State.EMERGING:
+		BossSandwormState.State.EMERGING:
 			_process_emerging()
-		BossState.State.CHASE:
+		BossSandwormState.State.CHASE:
 			_process_chase(delta)
-		BossState.State.TELEGRAPH, BossState.State.STRIKE, BossState.State.RECOVER:
+		BossSandwormState.State.TELEGRAPH, BossSandwormState.State.STRIKE, BossSandwormState.State.RECOVER:
 			_process_attack(delta)
-		BossState.State.RETREAT, BossState.State.FALLEN:
+		BossSandwormState.State.RETREAT, BossSandwormState.State.FALLEN:
 			_process_going_home()
 		_:
 			_move_dir = Vector3.ZERO
@@ -214,7 +214,7 @@ func _set_state(new_state: int) -> void:
 	_state_time = 0.0
 	_move_dir = Vector3.ZERO
 	# 离开招式三段就丢掉当前招 —— 于是"招式播到一半换表"不可能发生
-	if not BossState.is_attack_phase(new_state):
+	if not BossSandwormState.is_attack_phase(new_state):
 		_attack = null
 	_refresh_body_color()
 	state_changed.emit(previous, new_state)
@@ -234,13 +234,13 @@ func _process_dormant(delta: float) -> void:
 	if _trigger_timer >= trigger_dwell:
 		_trigger_timer = 0.0
 		_debug("玩家在触发圈内停留 %.1fs → 登场" % trigger_dwell)
-		_set_state(BossState.State.EMERGING)
+		_set_state(BossSandwormState.State.EMERGING)
 
 
 func _process_emerging() -> void:
 	if _state_time >= emerge_time:
 		_debug("登场完毕 → 追击")
-		_set_state(BossState.State.CHASE)
+		_set_state(BossSandwormState.State.CHASE)
 
 
 ## 追击：朝玩家移动，并在每次决策点选招
@@ -265,7 +265,7 @@ func _process_chase(delta: float) -> void:
 ## 三段走完回到 CHASE，由下一次决策重新选招（**不是** while 跳回上一行）
 func _process_attack(delta: float) -> void:
 	if _attack == null:
-		_set_state(BossState.State.CHASE)
+		_set_state(BossSandwormState.State.CHASE)
 		return
 	if _check_leash(delta):
 		return
@@ -280,14 +280,14 @@ func _process_attack(delta: float) -> void:
 
 	# 上面几行（尤其 _check_leash）可能已经把状态推走 ⇒ 只有确实还在招式三段里，
 	# 下面读 _attack.xxx 才是安全的。这是"招式播到一半绝不换表/丢招"的守门员。
-	if not BossState.is_attack_phase(_state):
+	if not BossSandwormState.is_attack_phase(_state):
 		return
 
 	match _state:
-		BossState.State.TELEGRAPH:
+		BossSandwormState.State.TELEGRAPH:
 			if _state_time >= _attack.telegraph_time:
-				_set_state(BossState.State.STRIKE)
-		BossState.State.STRIKE:
+				_set_state(BossSandwormState.State.STRIKE)
+		BossSandwormState.State.STRIKE:
 			# 判定只做一次（不是每帧扣血）
 			if not _strike_done:
 				_strike_done = true
@@ -298,12 +298,12 @@ func _process_attack(delta: float) -> void:
 				if _attack == null:
 					return
 			if _state_time >= _attack.strike_time:
-				_set_state(BossState.State.RECOVER)
-		BossState.State.RECOVER:
+				_set_state(BossSandwormState.State.RECOVER)
+		BossSandwormState.State.RECOVER:
 			if _state_time >= _attack.recover_time:
 				_cooldowns[_attack.attack_id] = _attack.cooldown
 				_debug("招式 %s 结算，进入冷却 %.1fs" % [_attack.attack_id, _attack.cooldown])
-				_set_state(BossState.State.CHASE)
+				_set_state(BossSandwormState.State.CHASE)
 		_:
 			pass
 
@@ -313,7 +313,7 @@ func _process_going_home() -> void:
 	var distance: float = _horizontal_distance(global_position, _home)
 	if distance <= arrive_radius:
 		_move_dir = Vector3.ZERO
-		if _state == BossState.State.FALLEN:
+		if _state == BossSandwormState.State.FALLEN:
 			_enter_gone()
 			return
 		# 脱战回巢：**回满血**（不是回一部分），可无限重复
@@ -324,7 +324,7 @@ func _process_going_home() -> void:
 		_leash_timer = 0.0
 		_reset_cooldowns()
 		_debug("已回巢，血量回满 → 待机")
-		_set_state(BossState.State.DORMANT)
+		_set_state(BossSandwormState.State.DORMANT)
 		return
 	var dir: Vector3 = _horizontal_dir(global_position, _home)
 	_face(dir)
@@ -334,11 +334,11 @@ func _process_going_home() -> void:
 ## 移动速度：由状态（以及招式的 move_scale）决定
 func _movement_speed() -> float:
 	match _state:
-		BossState.State.CHASE:
+		BossSandwormState.State.CHASE:
 			return chase_speed
-		BossState.State.RETREAT, BossState.State.FALLEN:
+		BossSandwormState.State.RETREAT, BossSandwormState.State.FALLEN:
 			return chase_speed * return_speed_scale
-		BossState.State.TELEGRAPH, BossState.State.STRIKE, BossState.State.RECOVER:
+		BossSandwormState.State.TELEGRAPH, BossSandwormState.State.STRIKE, BossSandwormState.State.RECOVER:
 			if _attack != null:
 				return chase_speed * _attack.move_scale
 			return 0.0
@@ -353,7 +353,7 @@ func _movement_speed() -> float:
 func _clamped_move_dir(dir: Vector3, speed: float, delta: float) -> Vector3:
 	if dir == Vector3.ZERO or speed <= 0.0:
 		return dir
-	if _state != BossState.State.CHASE and not BossState.is_attack_phase(_state):
+	if _state != BossSandwormState.State.CHASE and not BossSandwormState.is_attack_phase(_state):
 		return dir
 	var next_position: Vector3 = global_position + dir * speed * delta
 	if _horizontal_distance(next_position, _home) <= leash_radius:
@@ -380,7 +380,7 @@ func _clamped_move_dir(dir: Vector3, speed: float, delta: float) -> Vector3:
 ##      "永远逃不掉"（2026-09-25 用户反馈）；
 ##   ③ 量「玩家↔巢穴」则**与速度差无关**：跑出去多少就是多少，跑十来米就能脱身。
 func _check_leash(delta: float) -> bool:
-	if BossState.is_terminal(_state):
+	if BossSandwormState.is_terminal(_state):
 		return true
 	if leash_time <= 0.0:
 		return false
@@ -400,7 +400,7 @@ func _check_leash(delta: float) -> bool:
 
 ## 决策点执行一次：选到招就出招（返回 true），没招就交回 CHASE（返回 false）
 func _decide() -> bool:
-	var next: BossAttack = _pick_next_attack()
+	var next: BossSandwormAttack = _pick_next_attack()
 	if next == null:
 		return false
 	_start_attack(next)
@@ -410,11 +410,11 @@ func _decide() -> bool:
 ## 从上往下取第一条**同时**满足「不在 CD」且「玩家在射程内」的招。
 ## 扫不到 → null（调用方回 CHASE）。注意这是**固定优先级轮转**、不是随机：
 ## 第 1 招永远优先，第 3 招只在 1、2 都在 CD 时才出场。
-func _pick_next_attack() -> BossAttack:
-	var table: Array[BossAttack] = _current_table()
+func _pick_next_attack() -> BossSandwormAttack:
+	var table: Array[BossSandwormAttack] = _current_table()
 	var distance: float = player_distance()
 	for i in range(table.size()):
-		var candidate: BossAttack = table[i]
+		var candidate: BossSandwormAttack = table[i]
 		if candidate == null:
 			continue
 		if cooldown_left(candidate.attack_id) > 0.0:
@@ -428,18 +428,18 @@ func _pick_next_attack() -> BossAttack:
 
 
 ## 按血量选表。**相位切换只发生在决策点** —— 招式播到一半绝不换表
-func _current_table() -> Array[BossAttack]:
+func _current_table() -> Array[BossSandwormAttack]:
 	if max_health > 0 and float(_health) / float(max_health) > 0.5:
 		return _phase1_attacks
 	return _phase2_attacks
 
 
-func _start_attack(attack: BossAttack) -> void:
+func _start_attack(attack: BossSandwormAttack) -> void:
 	_attack = attack
 	_strike_done = false
 	attack_started.emit(attack.attack_id)
 	_debug("选招 %s（%s）" % [attack.attack_id, attack.describe()])
-	_set_state(BossState.State.TELEGRAPH)
+	_set_state(BossSandwormState.State.TELEGRAPH)
 
 
 ## 判定生效：玩家在判定半径内才扣血。用玩家**本体**（player/Physics）算距离
@@ -454,7 +454,7 @@ func _start_attack(attack: BossAttack) -> void:
 ##       Invalid access to property or key 'attack_id' on a base object of type 'Nil'）
 ##    ⚠ 同理，调用方（_process_attack）在调用本函数之后也必须重新确认 _attack 还在。
 func _apply_attack_damage() -> void:
-	var attack: BossAttack = _attack
+	var attack: BossSandwormAttack = _attack
 	if attack == null:
 		return
 	var body: Node3D = player_body()
@@ -485,7 +485,7 @@ func take_damage(damage: int) -> void:
 	#   进入 FALLEN 的**同一帧**完全可能再来第二段伤害把保底的 1 点打光。
 	if _untouchable:
 		return
-	if not BossState.can_be_hurt(_state):
+	if not BossSandwormState.can_be_hurt(_state):
 		return
 	if damage <= 0:
 		return
@@ -509,21 +509,21 @@ func _on_hurt(_damage: int) -> void:
 
 ## 濒死逃走：1 点生命 + **永久**无敌（不是 mob 那种 0.5 秒计时器）
 func _enter_fallen() -> void:
-	if _state == BossState.State.FALLEN or BossState.is_terminal(_state):
+	if _state == BossSandwormState.State.FALLEN or BossSandwormState.is_terminal(_state):
 		return
 	_untouchable = true
 	_trigger_timer = 0.0
 	_leash_timer = 0.0
 	_refresh_body_color()
 	_debug("血量见底 → 保留 1 点生命、永久无敌，开始逃走")
-	_set_state(BossState.State.FALLEN)
+	_set_state(BossSandwormState.State.FALLEN)
 
 
 ## 退场：一次性，且是**唯一**写世界状态的地方
 func _enter_gone() -> void:
-	if _state == BossState.State.GONE:
+	if _state == BossSandwormState.State.GONE:
 		return
-	_set_state(BossState.State.GONE)
+	_set_state(BossSandwormState.State.GONE)
 	if nest_flag != &"":
 		# 场地永久变化（巢穴坍塌 / 藤蔓天数 / 浮空岛是否坠落）的唯一落点：
 		# v2 的地图地形快照只存 1600×1600 的瓦片，装不下这些
@@ -542,24 +542,24 @@ func _enter_gone() -> void:
 ## 触发源有两个：① 玩家拖太远（_check_leash）② 玩家死亡（_on_player_died）。
 ## **两者共用这一条路径、同一个结果**，只区分触发源写日志。
 func _start_retreat(reason: String) -> void:
-	if BossState.is_terminal(_state) or _state == BossState.State.FALLEN:
+	if BossSandwormState.is_terminal(_state) or _state == BossSandwormState.State.FALLEN:
 		return
-	if _state == BossState.State.RETREAT:
+	if _state == BossSandwormState.State.RETREAT:
 		return
 	# 这里**不写任何世界状态**、可以无限重复 ⇒ 反复消耗磨不死它
 	_trigger_timer = 0.0
 	_leash_timer = 0.0
 	_debug("脱战（%s）→ 回巢回满血" % reason)
-	_set_state(BossState.State.RETREAT)
+	_set_state(BossSandwormState.State.RETREAT)
 
 
 ## 玩家死亡 → 同一条脱战路径。
 ## 必须接：RespawnSystem 完全不碰敌人，不接就会"守尸"
 ## （复活点若在仇恨圈内，玩家 5 秒后必再死）。
 func _on_player_died() -> void:
-	if BossState.is_terminal(_state):
+	if BossSandwormState.is_terminal(_state):
 		return
-	if _state == BossState.State.DORMANT:
+	if _state == BossSandwormState.State.DORMANT:
 		return
 	_start_retreat("玩家死亡")
 
@@ -658,7 +658,7 @@ func _reset_cooldowns() -> void:
 	_seed_cooldown_table(_phase2_attacks)
 
 
-func _seed_cooldown_table(table: Array[BossAttack]) -> void:
+func _seed_cooldown_table(table: Array[BossSandwormAttack]) -> void:
 	for attack in table:
 		if attack == null:
 			continue
@@ -714,11 +714,11 @@ func _refresh_body_color() -> void:
 	var color: Color = body_color
 	if _hurt_flash > 0.0:
 		color = hurt_color
-	elif _state == BossState.State.FALLEN or _state == BossState.State.GONE:
+	elif _state == BossSandwormState.State.FALLEN or _state == BossSandwormState.State.GONE:
 		color = fallen_color
-	elif _state == BossState.State.TELEGRAPH and _attack != null:
+	elif _state == BossSandwormState.State.TELEGRAPH and _attack != null:
 		# 前摇的视觉信号：体色变红 = "要打了，快跑"
-		# 正式美术接入后这一段由动画承担（BossAttack.telegraph_color 只是占位）
+		# 正式美术接入后这一段由动画承担（BossSandwormAttack.telegraph_color 只是占位）
 		color = _attack.telegraph_color
 	_body_material.albedo_color = color
 	if _jaw_material != null:
@@ -732,12 +732,12 @@ func _update_visual(delta: float) -> void:
 		return
 	var position: Vector3 = _visual.position
 	match _state:
-		BossState.State.EMERGING:
+		BossSandwormState.State.EMERGING:
 			var t: float = 1.0
 			if emerge_time > 0.0:
 				t = clampf(_state_time / emerge_time, 0.0, 1.0)
 			position.y = lerpf(-buried_depth, 0.0, t)
-		BossState.State.DORMANT, BossState.State.GONE:
+		BossSandwormState.State.DORMANT, BossSandwormState.State.GONE:
 			position.y = move_toward(position.y, -buried_depth, rise_speed * delta)
 		_:
 			position.y = move_toward(position.y, 0.0, rise_speed * delta)
@@ -806,10 +806,10 @@ func set_home_position(position: Vector3) -> void:
 
 ## 跳过"靠近 + 停留"，直接唤起（方便反复测招式/三段时序）
 func debug_wake() -> void:
-	if _state != BossState.State.DORMANT:
+	if _state != BossSandwormState.State.DORMANT:
 		return
 	_debug("调试唤起")
-	_set_state(BossState.State.EMERGING)
+	_set_state(BossSandwormState.State.EMERGING)
 
 
 ## 把血量打到指定值。**走正常受伤路径**，所以"保底 1 点 + 濒死"的规则照样生效：
@@ -843,13 +843,13 @@ func current_phase() -> int:
 
 
 ## 此刻正在执行的那条招式（不在招式三段里时为 null）
-func current_attack() -> BossAttack:
+func current_attack() -> BossSandwormAttack:
 	return _attack
 
 
 ## 是否已经"输掉这场架"（濒死逃走 or 已退场）—— 存档用它判 defeated
 func is_defeated() -> bool:
-	return _state == BossState.State.FALLEN or BossState.State.GONE == _state
+	return _state == BossSandwormState.State.FALLEN or BossSandwormState.State.GONE == _state
 
 
 func current_attack_id() -> StringName:
@@ -861,7 +861,7 @@ func current_attack_id() -> StringName:
 ## 调试面板用的一行描述（测试场地每帧刷这个）
 func debug_line() -> String:
 	return "状态 %s   HP %d/%d   距离 %.1f m   用招 %s" % [
-		BossState.label_of(_state),
+		BossSandwormState.label_of(_state),
 		_health,
 		max_health,
 		player_distance(),
@@ -871,7 +871,7 @@ func debug_line() -> String:
 
 func _describe_cooldowns() -> String:
 	var parts: Array[String] = []
-	var table: Array[BossAttack] = _current_table()
+	var table: Array[BossSandwormAttack] = _current_table()
 	for attack in table:
 		if attack == null:
 			continue
@@ -901,11 +901,11 @@ func _debug(text: String) -> void:
 
 
 func _tick_debug(delta: float) -> void:
-	if not _debug_on() or BossState.is_terminal(_state):
+	if not _debug_on() or BossSandwormState.is_terminal(_state):
 		return
 	_debug_timer += delta
 	if _debug_timer < 1.0:
 		return
 	_debug_timer = 0.0
 	_debug("状态=%s HP=%d/%d 距离=%.1f" % [
-		BossState.label_of(_state), _health, max_health, player_distance()])
+		BossSandwormState.label_of(_state), _health, max_health, player_distance()])

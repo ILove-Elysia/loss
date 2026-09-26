@@ -16,7 +16,7 @@
 # ⚠ 两个圈**同心**，圆心都是巢穴：
 #     触发圈（trigger_radius）＝ 玩家进圈并停留 trigger_dwell → 沙虫钻出；
 #     领地圈（leash_radius）  ＝ 玩家出圈并持续 leash_time → 沙虫回巢回满血。
-#   领地判定的基准是「玩家↔巢穴」，**不是「玩家↔沙虫」**（BossBase._check_leash）。
+#   领地判定的基准是「玩家↔巢穴」，**不是「玩家↔沙虫」**（BossSandwormBase._check_leash）。
 #   2026-09-25 之前量的是玩家↔沙虫，而脱战要求"拉开 leash_radius 的差距"，
 #   速度差却只有 1 m/s（玩家 5.0 vs 沙虫 4.0；低电时沙虫还更快）⇒ 得笔直跑
 #   30 秒以上，"逃不掉"就是这么来的。改成量巢穴距离后与速度差无关，跑十来米就脱身。
@@ -29,7 +29,7 @@
 #   T  把玩家挪到触发圈内  → 停留 trigger_dwell 后沙虫钻出
 #   H  把玩家挪到领地圈外  → 持续 leash_time 后沙虫回巢回满血
 #   K  打死玩家            → 沙虫应**立刻**回巢回满血（不许守尸）
-#   W  直接唤起沙虫（跳过"靠近停留"，方便反复测招式）
+#   G  直接唤起沙虫（跳过"靠近停留"，方便反复测招式）
 #   1  沙虫血量降到 60%    → 下一决策点仍用表 1
 #   2  沙虫血量降到 40%    → **下一决策点**才切表 2（招式播到一半不切）
 #   9  把沙虫打到 1 血     → 濒死逃走 → 巢穴坍塌（世界旗标置 1）
@@ -62,7 +62,7 @@ const TERRAIN_TINTS := preload("res://script/map/task_system.gd")
 ## 那是给玩家的体温/湿度系统看的（理由见 test/arena_flat_map_gen.gd），两者不冲突
 const GROUND_TERRAIN := 13
 
-var _boss: BossBase = null
+var _boss: BossSandwormBase = null
 var _label: Label = null
 var _nest: Node3D = null
 var _leash_ring: MeshInstance3D = null
@@ -76,7 +76,7 @@ func _ready() -> void:
 	_fit_ground()
 	_ensure_unshaded_materials()
 	_build_rings()
-	_note("场地就绪：T 靠近巢穴 / H 拖远 / K 自杀 / W 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
+	_note("场地就绪：T 靠近巢穴 / H 拖远 / K 自杀 / G 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
 
 
 func _process(_delta: float) -> void:
@@ -101,7 +101,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_move_player_near(false)
 		KEY_K:
 			_kill_player()
-		KEY_W:
+		KEY_G:
 			_wake_boss()
 		KEY_1:
 			_damage_boss_to_ratio(0.6)
@@ -131,9 +131,9 @@ func _spawn_boss() -> void:
 		return
 
 	var instance: Node = packed.instantiate()
-	_boss = instance as BossBase
+	_boss = instance as BossSandwormBase
 	if _boss == null:
-		_note("错误：沙虫场景的根节点不是 BossBase")
+		_note("错误：沙虫场景的根节点不是 BossSandwormBase")
 		if instance != null:
 			instance.free()
 		return
@@ -398,7 +398,7 @@ func _panel_lines() -> Array[String]:
 		])
 
 	lines.append("玩家 " + _player_line())
-	lines.append("T 靠近巢穴 / H 拖远 / K 自杀 / W 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
+	lines.append("T 靠近巢穴 / H 拖远 / K 自杀 / G 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
 	lines.append(_last_message)
 	return lines
 

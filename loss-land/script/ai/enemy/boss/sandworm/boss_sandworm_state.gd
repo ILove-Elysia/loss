@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/sandworm/boss_state.gd
+# script/ai/enemy/boss/sandworm/boss_sandworm_state.gd
 # ============================================
 # Boss 状态枚举与谓词（纯静态，无实例）
 #
@@ -14,7 +14,7 @@
 # 规格见 主线设计规格.md 1.2 / 2.2。
 # ============================================
 
-class_name BossState
+class_name BossSandwormState
 extends RefCounted
 
 # ============================================

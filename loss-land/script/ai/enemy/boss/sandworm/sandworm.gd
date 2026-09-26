@@ -14,11 +14,11 @@
 #   招式表的选取是"从上往下取首条不在 CD 且在射程内"＝**确定性轮转**，不是随机，
 #   所以第 1 招永远优先、最后一条只在前面全在 CD 时才出场（玩家可以背板）。
 #
-# 状态机本体在 boss_base.gd，本文件只负责"性格"（数值 + 招式表）。
+# 状态机本体在 boss_sandworm_base.gd，本文件只负责"性格"（数值 + 招式表）。
 # ============================================
 
 class_name Sandworm
-extends BossBase
+extends BossSandwormBase
 
 ## 稳定身份：存档里用这个认它（**不要**用节点路径 —— Boss 是运行时生成/移除的）
 const BOSS_ID := &"sandworm_surface"
@@ -45,7 +45,7 @@ func _ready() -> void:
 # 表 2 目前是"表 1 的三招（冷却缩短）+ 新增一招「流沙陷落」"。
 # ⚠ 这是**待定项**（原案也可能是"另换四招"）：改这里即可，状态机一行都不用动。
 #
-# 字段含义见 boss_attack.gd：
+# 字段含义见 boss_sandworm_attack.gd：
 #   min_range / max_range  决策点筛选用的射程
 #   telegraph_time         前摇 = 给玩家跑的时间（0.9s 对 5.0 m/s 的玩家 ≈ 4.5 m）
 #   strike_time            判定生效时长（只判一次）
@@ -114,14 +114,14 @@ func _build_attacks() -> void:
 	])
 
 
-## 把"字典声明"批量变成 BossAttack。
-## 不直接把数组字面量赋给 Array[BossAttack]：字面量的静态类型是 Array，
+## 把"字典声明"批量变成 BossSandwormAttack。
+## 不直接把数组字面量赋给 Array[BossSandwormAttack]：字面量的静态类型是 Array，
 ## 赋给类型化数组会因元素类型不确定而编译报错，所以统一走这个转换函数。
-func _make_table(rows: Array) -> Array[BossAttack]:
-	var table: Array[BossAttack] = []
+func _make_table(rows: Array) -> Array[BossSandwormAttack]:
+	var table: Array[BossSandwormAttack] = []
 	for row in rows:
 		var data: Dictionary = row
-		table.append(BossAttack.make(data))
+		table.append(BossSandwormAttack.make(data))
 	return table
 
 

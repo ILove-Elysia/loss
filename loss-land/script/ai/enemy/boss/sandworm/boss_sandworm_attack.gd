@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/sandworm/boss_attack.gd
+# script/ai/enemy/boss/sandworm/boss_sandworm_attack.gd
 # ============================================
 # Boss 招式描述（一个 Resource，描述"这一招怎么演"）
 #
@@ -17,7 +17,7 @@
 # make({...}) 声明（见 sandworm.gd）。
 # ============================================
 
-class_name BossAttack
+class_name BossSandwormAttack
 extends Resource
 
 @export_group("身份")
@@ -60,8 +60,8 @@ extends Resource
 
 ## 用字典声明一条招式。
 ## 只写关心的字段，其余走默认值 —— 招式表因此可以写得很短。
-static func make(data: Dictionary) -> BossAttack:
-	var attack: BossAttack = BossAttack.new()
+static func make(data: Dictionary) -> BossSandwormAttack:
+	var attack: BossSandwormAttack = BossSandwormAttack.new()
 	attack.attack_id = StringName(data.get("id", &""))
 	attack.display_name = String(data.get("name", attack.attack_id))
 	attack.shape = int(data.get("shape", 0))
