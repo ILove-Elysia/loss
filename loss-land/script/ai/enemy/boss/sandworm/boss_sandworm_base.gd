@@ -10,7 +10,7 @@
 #   3 × 900 行，而且表达不了 Boss 真正需要的几件事（前摇可躲、濒死保命、
 #   脱战可重复、世界推进）。
 #
-# 六条钉死的规则（改动前先读 主线设计规格.md 1.2）：
+# 七条钉死的规则（改动前先读 主线设计规格.md 1.2）：
 #   1. **没有 dead 状态**。Boss 的终点是 GONE（退场），不是"死亡 + queue_free"。
 #      所以本文件里不会有 _die()，也不会有 queue_free()。
 #   2. **RETREAT 与 FALLEN 是两件事**。RETREAT = 玩家跑了，可重复、回满血、
@@ -39,6 +39,15 @@
 #      · ⚠ 预警片"钉死"还是"跟着走"由 aims_at_player 决定：朝地面打的招（流沙）
 #        必须钉死（否则圈追着玩家跑＝必中）；以**自己**为原点的招（撕咬/突袭）
 #        必须跟着走（判定原点就是它本人，见 _update_zone_fx）。
+#   7. **"打算放突进招"时先提速逼近**（2026-09-27 用户要求："完善潜行突袭的快速靠近 +
+#      高速难躲；速度大幅增加、**一定要大于玩家的默认速度**，直到释放出潜行突袭后才
+#      恢复原来的速度"）：
+#      · 招式可配 approach_speed（**绝对值**，0 ⇒ 用 chase_speed）；
+#      · CHASE 里按 upcoming_attack()（只读预判"轮转接下来轮到谁"、**不改指针**）
+#        把移速顶到那一招的 approach_speed ⇒ ④ 配 7.0 > 玩家满速 5.0 ⇒ **跑不掉**；
+#      · ⚠ 一起手就离开 CHASE ⇒ 速度立刻交回招式段那一档 ⇒ "放完之后恢复原来的速度"
+#        是**结构性**成立的，不靠额外计时器（那种写法迟早漏掉某条退出路径）。
+#      · ⚠ 它只管**逼近**：招式三段本身的位移由 move_scale 决定，而定身招是 0。
 #
 # 与现有系统的边界：
 #   - **不进 "enemy" 组**，用 "boss" 组：
@@ -477,11 +486,18 @@ func _process_going_home() -> void:
 	_move_dir = dir
 
 
-## 移动速度：由状态（以及招式的 move_scale）决定
+## 移动速度：由状态（以及招式的 move_scale / approach_speed）决定
 func _movement_speed() -> float:
 	match _state:
 		BossSandwormState.State.CHASE:
-			return chase_speed
+			# **逼近速度可以被"接下来要放的那一招"顶上去**（2026-09-27）：
+			# 轮转指针落在 ④潜行突袭 头上的那几秒，它必须追得上满速玩家 ——
+			# 否则"潜行突袭"永远起不了手（④ 的 max_range 是贴脸距离），
+			# 玩家只要一直退就永远见不到这一招（用户反馈："快速靠近 + 高速难躲"没实现）。
+			# ⚠ 一旦起手，状态就离开 CHASE ⇒ 速度立刻交回招式段（move_scale 那一档）；
+			#   所以"释放出来之后恢复原来的速度"是**结构性**成立的，不靠额外计时器。
+			var closing: float = _approach_speed()
+			return closing if closing > 0.0 else chase_speed
 		BossSandwormState.State.RETREAT, BossSandwormState.State.FALLEN:
 			return chase_speed * return_speed_scale
 		BossSandwormState.State.TELEGRAPH, BossSandwormState.State.STRIKE, BossSandwormState.State.RECOVER:
@@ -490,6 +506,14 @@ func _movement_speed() -> float:
 			return 0.0
 		_:
 			return 0.0
+
+
+## 逼近阶段该用多快 —— 由"接下来要放的那一招"的 approach_speed 决定（0 ⇒ 用 chase_speed）。
+func _approach_speed() -> float:
+	var next: BossSandwormAttack = upcoming_attack()
+	if next == null:
+		return 0.0
+	return next.approach_speed
 
 
 ## 领地绳：追击与出招期间，把"朝领地外"的那一维分量削掉。
@@ -602,6 +626,33 @@ func _pick_next_attack() -> BossSandwormAttack:
 		_attack_index = index
 		return candidate
 	_attack_index = -1
+	return null
+
+
+## **只读预判**：轮转接下来会选哪一招 —— 跳过"在 CD 里"的，但**不做距离筛选**。
+##
+## 与 _pick_next_attack 的分工：
+##   · 它**不改任何指针、也不看够不够得着**，纯粹回答"下一个轮到谁"；
+##   · 够得着 ⇒ 决策点当场就会放它（两条路径给出同一招）；
+##   · 够不着 ⇒ 沙虫正**为它而逼近** —— 这正是逼近速度（approach_speed）要读的时机，
+##     也是本函数存在的唯一理由（见 _movement_speed 的 CHASE 分支）。
+##
+## ⚠ 调用时机很重要：必须在**每帧 CHASE 的决策点之后**读（_physics_process 末尾算速度时
+##   就已经满足）。那时如果没起手，就说明这一招确实够不着 ⇒ 读到的正是"它在为谁追"。
+##   在别处（比如招式三段里）读没有意义，因为指针已经推进到下一招了。
+func upcoming_attack() -> BossSandwormAttack:
+	var table: Array[BossSandwormAttack] = _current_table()
+	var count: int = table.size()
+	if count == 0:
+		return null
+	for step in range(count):
+		var index: int = (_rotation_index + step) % count
+		var candidate: BossSandwormAttack = table[index]
+		if candidate == null:
+			continue
+		if cooldown_left(candidate.attack_id) > 0.0:
+			continue
+		return candidate
 	return null
 
 

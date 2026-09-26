@@ -27,6 +27,10 @@
 #     受击体半径 ≤ 0.85（玩家最远够得着的距离 3.3 m → 2.8 m）；
 #     玩家在 22 m 外（**超出最远的 ③ 的 20 m**）整段时间一招都不放，走近 1 m 内又立刻出招
 #     （2026-09-27 射程改版后 ②③ 变远，原来的 12 m 已不够"远"，所以抬到 22 m）
+# #20 是 2026-09-27 按用户要求"完善潜行突袭的快速靠近 + 高速难躲"补的：
+#     轮转落到 ④ 时它的**逼近速度**必须 > 玩家满速 5.0（approach_speed = 7.0）⇒
+#     玩家全速逃跑也照样被贴上；④ 一放完就自动回到 chase_speed 3.4。
+#     判据是"同样 2 s 内它的位移 vs 满速玩家的位移"，两次测量的位置与玩家行为完全相同
 #
 # 关键设计：
 #   · 直接实例化 Boss，不加载 map.tscn —— 那边一次地图生成要 12~20 秒；
@@ -861,6 +865,148 @@ func _run_cases() -> void:
 	var fired_when_close: bool = await _wait_for_attack_phase(6.0)
 	_check(fired_when_close, "贴近到 1 m 内 ⇒ 立刻恢复出招（出手距离是上界，不是把招式关掉）")
 	_place_target_at(3.0)
+	_target.revive()
+
+	print("[用例 20] ④潜行突袭的**逼近加速**：要放它时比满速玩家还快，放完自动恢复")
+	# 需求原文（2026-09-27）：「完善"潜行突袭"的快速靠近 + 高速难躲。
+	#   如果要释放潜行突袭，则沙虫的速度大幅增加（一定要大于玩家的默认速度），
+	#   直到释放出"潜行突袭"后才恢复原来的速度」。
+	#
+	# ⚠ 这一条**不靠读内部字段**判"有没有加速"，而是直接量位移再除以时间：
+	#   标尺借玩家满速（5.0 m/s），语义就是那句话本身 ——
+	#     · 要放 ④ 时：同样 2 s，它跑得比"全速逃跑的玩家"还远 ⇒ 追得上（跑不掉）；
+	#     · ④ 放完之后：同样 2 s，它跑得比玩家满速还短 ⇒ 恢复成原来那个追不上的速度。
+	#   两次测量的**位置与玩家行为完全相同**，唯一差别只有"轮转轮到哪一招"⇒
+	#   位移差只可能来自 approach_speed（比"读一下配置字段"硬得多）。
+	#
+	# ⚠ 玩家必须**真的在跑**（每帧沿 +Z 推 5.0 × dt）：站着不动的玩家区分不出 7.0 与 3.4，
+	#   那样断言就退化成"测它会不会动"了（用例 16 踩过同款"退化成常量"）。
+	# ⚠ 起始间距 10 m：跑满 2 s 玩家到 20 m，仍 < leash_radius(24) ⇒ 不会被领地判定
+	#   半路打断成 RETREAT（那会让位移变成"回巢"，量到的就不是逼近速度了）。
+	var nest: Vector3 = _boss.home_position()
+	var run_speed: float = 5.0  # 玩家默认满速（physics.gd）
+	var sample: float = 2.0
+	var chase_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
+
+	# ---- 先把局面重置成"轮转指针必定停在 ④"----
+	# ⚠ 为什么必须重置：指针只在**相位切换**时归零，而用例 18/19 已经把它推到了 ②③ 那一段
+	#   ⇒ 直接量会量到别的招（第一版就栽在这：读到的 upcoming 是 ③，它 10 m 处够得着、
+	#   于是当场起手定身招，位移 0）。
+	# 做法走**真实流程**、不戳内部字段，和用例 15 钉"4123"用的是同一条规则：
+	#   ① 让玩家死一次 ⇒ 它脱战回巢（血回满 ⇒ 相位回到表 1）；
+	#   ② 重新触发登场、以**满血**在 CHASE 里过一帧 ⇒ _sync_rotation_with_phase 把指针归零
+	#      （这一步不能省：_phase_cache 只在决策点更新，跳过它就一直是 2、根本不触发归零）；
+	#   ③ 再把血打过 50% ⇒ 相位 1 → 2 ⇒ **再次**归零 ⇒ 下一招必定是 ④。
+	_target.kill()
+	await _step(0.2)
+	var reset_home: bool = await _wait_for_state(BossSandwormState.State.DORMANT, 30.0)
+	_check(reset_home, "重置：玩家死亡 → 它回巢回到待机（血回满 ⇒ 相位回表 1）")
+	_target.revive()
+	_target.global_position = Vector3(nest.x, 0.0, nest.z + 10.0)
+	# 10 m 在 trigger_radius(14) 内 ⇒ 停留够时长就会重新登场
+	var reengaged: bool = await _wait_for_state(BossSandwormState.State.CHASE, 30.0)
+	_check(reengaged, "重置：重新登场（满血 ⇒ 表 1、轮转指针归零）")
+	_boss.debug_damage_to(int(_boss.get_max_health() * 0.4))
+	_check(_boss.current_phase() == 2,
+		"重置：血量跌破 50% ⇒ 表 2（换表时指针归零 ⇒ 指向 ④）")
+
+	# ---- (a) 轮到 ④ ⇒ 逼近加速，追得上满速逃跑的玩家 ----
+	_boss.global_position = Vector3(nest.x, _boss.global_position.y, nest.z)
+	_target.global_position = Vector3(nest.x, 0.0, nest.z + 10.0)
+	await physics_frame
+	var upcoming: BossSandwormAttack = _boss.upcoming_attack()
+	var upcoming_id: StringName = &"<无>"
+	if upcoming != null:
+		upcoming_id = upcoming.attack_id
+	_check(upcoming_id == &"dash_bite",
+		"轮转接下来要放的是 ④潜行突袭（表 2 表头；此刻是 %s）" % upcoming_id)
+	if upcoming != null:
+		_check(upcoming.approach_speed > run_speed,
+			"④ 的逼近速度 %.1f > 玩家满速 %.1f（用户要求：一定要大于玩家的默认速度）"
+				% [upcoming.approach_speed, run_speed])
+	var charge_start: Vector3 = _boss.global_position
+	var gap_start: float = _boss_distance()
+	var ran_charge: float = 0.0
+	while ran_charge < sample:
+		_target.global_position += Vector3(0.0, 0.0, run_speed * chase_frame)
+		await physics_frame
+		ran_charge += chase_frame
+	var charge_delta: Vector3 = _boss.global_position - charge_start
+	var charge_moved: float = sqrt(charge_delta.x * charge_delta.x
+		+ charge_delta.z * charge_delta.z)
+	var gap_end: float = _boss_distance()
+	_check(charge_moved > run_speed * sample,
+		"轮到 ④ 时 %.0f s 内它位移 %.1f m > 满速玩家的 %.1f m ⇒ 追得上"
+			% [sample, charge_moved, run_speed * sample])
+	_check(gap_end < gap_start,
+		"玩家全速逃跑时距离仍在缩小（%.1f m → %.1f m）" % [gap_start, gap_end])
+
+	# ---- 让它把 ④ 放出来（轮转随之推进到 ①）----
+	_place_target_at(3.0)
+	var fired: bool = false
+	var waited_fire: float = 0.0
+	while waited_fire < 20.0:
+		await physics_frame
+		waited_fire += chase_frame
+		_target.revive()
+		if _boss.current_attack_id() == &"dash_bite" \
+				and _boss.get_state() == BossSandwormState.State.STRIKE:
+			fired = true
+			break
+	_check(fired, "加速之后它追上来、把 ④ 放了出来（进入判定段）")
+	var dash_finished: bool = false
+	var waited_finish: float = 0.0
+	while waited_finish < 10.0:
+		await physics_frame
+		waited_finish += chase_frame
+		_target.revive()
+		if _boss.current_attack_id() != &"dash_bite":
+			dash_finished = true
+			break
+	_check(dash_finished, "④ 走完三段 ⇒ 轮转推进到下一招")
+
+	# ---- (b) ④ 已放完 ⇒ 逼近速度恢复 ----
+	# 摆位与 (a) **一模一样**（Boss 回巢穴、玩家 10 m 外），玩家行为也一样，
+	# 唯一的差别是轮转指针已经走到 ① ⇒ 这正是"释放之后恢复原来的速度"的对照实验。
+	_boss.global_position = Vector3(nest.x, _boss.global_position.y, nest.z)
+	_target.global_position = Vector3(nest.x, 0.0, nest.z + 10.0)
+	var plain_chase: bool = false
+	var waited_plain: float = 0.0
+	while waited_plain < 15.0:
+		await physics_frame
+		waited_plain += chase_frame
+		_target.revive()
+		if _boss.get_state() == BossSandwormState.State.CHASE \
+				and _boss.current_attack() == null:
+			plain_chase = true
+			break
+	_check(plain_chase, "④ 之后回到纯追击态（10 m 外没有招够得着 ⇒ 不会立刻又起手）")
+	var upcoming_after: BossSandwormAttack = _boss.upcoming_attack()
+	var after_id: StringName = &"<无>"
+	if upcoming_after != null:
+		after_id = upcoming_after.attack_id
+	_check(after_id != &"dash_bite",
+		"放完 ④ 之后轮转已经走到下一招（此刻是 %s）⇒ 不该再加速" % after_id)
+	var plain_start: Vector3 = _boss.global_position
+	var ran_plain: float = 0.0
+	while ran_plain < sample:
+		_target.global_position += Vector3(0.0, 0.0, run_speed * chase_frame)
+		await physics_frame
+		ran_plain += chase_frame
+	var plain_delta: Vector3 = _boss.global_position - plain_start
+	var plain_moved: float = sqrt(plain_delta.x * plain_delta.x
+		+ plain_delta.z * plain_delta.z)
+	_check(plain_moved < run_speed * sample,
+		"放完 ④ 之后同样 %.0f s 只位移 %.1f m < 满速玩家的 %.1f m ⇒ 恢复原来的速度"
+			% [sample, plain_moved, run_speed * sample])
+	_check(plain_moved < charge_moved - 3.0,
+		"放完 ④ 之后确实慢下来（%.1f m vs 轮到 ④ 时的 %.1f m）"
+			% [plain_moved, charge_moved])
+	# 收尾摆位：贴着 0.9 m ⇒ ① 够得着（它的 max_range 是 1.0）⇒ 会起手 ⇒ 顺带把
+	# "露头才开受击碰撞体"交给下一个用例（用例 3 要等它露头才能真刀真枪地打）。
+	# ⚠ 摆 3 m 不行：指针这时停在 ①，而"够不着就 return null 且**不推进指针**"
+	#   ⇒ 它会一步都不出招，用例 3 干等 25 s。
+	_place_target_at(0.9)
 	_target.revive()
 
 	print("[用例 3] 濒死：保底 1 点生命 + 永久无敌")

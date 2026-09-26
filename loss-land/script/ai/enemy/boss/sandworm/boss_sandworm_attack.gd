@@ -80,6 +80,23 @@ extends Resource
 ## 大于这个距离不选这招（够不着就别空放）
 @export var max_range: float = 5.0
 
+@export_group("逼近（决定要放这一招时的追击）")
+## **为了释放这一招，逼近阶段（CHASE 追击）用的移速（m/s）**。0 ⇒ 用基类的 chase_speed。
+##
+## ④潜行突袭用它，而且是本设计的核心之一（2026-09-27 用户要求："如果要释放潜行突袭，
+## 则沙虫的速度大幅增加（**一定要大于玩家的默认速度**）直到释放出潜行突袭后才恢复原来的速度"）：
+##   · 轮转指针一落到它头上 ⇒ 沙虫立刻加速扑向玩家，**不管玩家怎么跑都追得上**；
+##   · 直到这一招真的放出去（判定结算完、指针推进到下一招）才降回 chase_speed。
+## 这就是"快速靠近 + 高速难躲"的实现方式 —— 它的压迫感来自"跑不掉"，不是来自伤害。
+##
+## ⚠ 它必须是**绝对值**、而且**要大于玩家满速 5.0**（标尺：满速 5.0，饥饿 ×0.9 ⇒ 4.5，
+##   低电 ×0.7 ⇒ 3.15）。配 ≤ 5.0 就追不上满速玩家 ⇒ "突袭"变成"在屁股后面吃灰"
+##   （老版只有 chase_speed 3.4，正是用户这次说"没实现"的那半边）。
+## ⚠ 它**只管逼近**（CHASE 段）：一旦进入招式三段，移速改由 move_scale 决定。
+##   ④ 的 move_scale 因为 facing_locked 而没有位移出口 ⇒ 前摇是定身的（见基类 _process_attack），
+##   所以"扑到脸上"这件事完全由这一段加速完成。
+@export var approach_speed: float = 0.0
+
 @export_group("三段时长")
 @export var telegraph_time: float = 0.9
 @export var strike_time: float = 0.2
@@ -166,6 +183,7 @@ static func make(data: Dictionary) -> BossSandwormAttack:
 	attack.damage = int(data.get("damage", attack.damage))
 	attack.min_range = float(data.get("min_range", attack.min_range))
 	attack.max_range = float(data.get("max_range", attack.max_range))
+	attack.approach_speed = float(data.get("approach_speed", attack.approach_speed))
 	attack.telegraph_time = float(data.get("telegraph_time", attack.telegraph_time))
 	attack.strike_time = float(data.get("strike_time", attack.strike_time))
 	attack.recover_time = float(data.get("recover_time", attack.recover_time))
@@ -301,6 +319,8 @@ func describe() -> String:
 	var line: String = "%s 伤害%d 射程%.1f~%.1f 前摇%.2f 后摇%.2f CD%.1f" % [
 		label, damage, min_range, max_range, telegraph_time, recover_time, cooldown,
 	]
+	if approach_speed > 0.0:
+		line += " 逼近%.1fm/s" % approach_speed
 	if is_sector():
 		line += " 扇形%.0f°" % arc_degrees
 	if is_rect():
