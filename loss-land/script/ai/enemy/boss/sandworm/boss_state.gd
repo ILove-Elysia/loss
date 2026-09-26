@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/boss_state.gd
+# script/ai/enemy/boss/sandworm/boss_state.gd
 # ============================================
 # Boss 状态枚举与谓词（纯静态，无实例）
 #

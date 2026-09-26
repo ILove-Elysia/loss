@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/boss_attack.gd
+# script/ai/enemy/boss/sandworm/boss_attack.gd
 # ============================================
 # Boss 招式描述（一个 Resource，描述"这一招怎么演"）
 #

@@ -1,6 +1,6 @@
 [gd_scene load_steps=5 format=3]
 
-[ext_resource type="Script" path="res://script/ai/enemy/boss/sandworm.gd" id="1_sandworm"]
+[ext_resource type="Script" path="res://script/ai/enemy/boss/sandworm/sandworm.gd" id="1_sandworm"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_body"]
 height = 2.4

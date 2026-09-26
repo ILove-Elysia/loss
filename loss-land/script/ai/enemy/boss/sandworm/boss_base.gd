@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/boss_base.gd
+# script/ai/enemy/boss/sandworm/boss_base.gd
 # ============================================
 # Boss 通用状态机骨架（三条 Boss 线共用）
 #

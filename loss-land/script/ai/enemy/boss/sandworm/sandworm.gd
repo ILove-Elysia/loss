@@ -1,4 +1,4 @@
-# script/ai/enemy/boss/sandworm.gd
+# script/ai/enemy/boss/sandworm/sandworm.gd
 # ============================================
 # 沙虫 · 地表战（第一条 Boss 线）
 #
