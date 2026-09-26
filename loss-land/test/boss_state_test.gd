@@ -4,7 +4,7 @@
 #
 #   godot --headless --path . --script res://test/boss_state_test.gd
 #
-# 对应用例表：主线设计规格.md 1.10（#1~5）+ 2.9（#8~17）。
+# 对应用例表：主线设计规格.md 1.10（#1~5）+ 2.9（#8~18）。
 # #13 是线上缺陷回归（2026-09-26「被沙虫打死后会报错」）：招式判定把玩家打死时，
 #     玩家 died 信号会**同步**把状态机推去 RETREAT、连带丢掉当前招，
 #     扣血函数回来后再读 _attack 就是空引用。规格里没有这一条，是修 bug 补的。
@@ -18,6 +18,11 @@
 #     #17 ②吐沙 = **连吐 4 发的弹道**（判定段真的射出 4 颗；假玩家连碰撞体都没有
 #         也能被打中 ⇒ 顺带证明命中判定走的是"组名 + 距离"而不是物理查询。
 #         站定不动 ⇒ 4 发全中；判定段里持续横移 ⇒ 4 发全空）
+#     #18 ④潜行突袭 = **面前长条矩形**（用户要求"快速靠近玩家然后对长条矩形范围的
+#         玩家造成伤害，快速靠近不会造成伤害，长条矩形才会造成伤害"）：
+#         站在它的扑击直线上 ⇒ 命中；前摇里**侧移**出走廊 ⇒ 咬空 ——
+#         同一个位置若按老的圆形判定（半径 4.0）本该命中，所以这条断言
+#         同时钉死了"形状真的是长条"，以及"朝向在起手就定格"（facing_locked）
 #
 # 关键设计：
 #   · 直接实例化 Boss，不加载 map.tscn —— 那边一次地图生成要 12~20 秒；
@@ -225,6 +230,23 @@ func _wait_for_strike_of(attack_id: StringName, timeout: float) -> bool:
 		elapsed += per_frame
 		if _boss.current_attack_id() == attack_id \
 				and _boss.get_state() == BossSandwormState.State.STRIKE:
+			return true
+	return false
+
+
+## 等"某一招的**前摇**"（判定还没发生、局面还改得动）。
+##
+## ⚠ 用例 18 必须在**前摇里**摆位：伤害只在判定段的**第一帧**结算一次，
+##   等检测到 STRIKE 时已经打完了。
+## ⚠ ④的前摇只有 0.35 s（≈21 个物理帧），别在这个函数里加多余的等待。
+func _wait_for_telegraph_of(attack_id: StringName, timeout: float) -> bool:
+	var per_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
+	var elapsed: float = 0.0
+	while elapsed < timeout:
+		await physics_frame
+		elapsed += per_frame
+		if _boss.current_attack_id() == attack_id \
+				and _boss.get_state() == BossSandwormState.State.TELEGRAPH:
 			return true
 	return false
 
@@ -700,6 +722,64 @@ func _run_cases() -> void:
 	_check(repeat_melee == 0,
 		"**就地判定**的招每次出招只扣一次血（重复 %d 次；另有 %d 次落在招式之外、无法归属）"
 			% [repeat_melee, unhooked_hits])
+
+	print("[用例 18] ④潜行突袭是**长条矩形**：站在扑击直线上才咬得到，侧移就落空")
+	# 血量已经低于 50%（用例 11 打的）⇒ 表 2 ⇒ 轮转读作 ④①②③
+	_place_target_at(5.0)
+	_target.revive()
+	_boss.debug_set_all_cooldowns(0.0)
+	# ⚠ 名字不能撞同作用域已有的：frame_time（用例 12）/ spit_frame（用例 17）/
+	#   watch_frame（用例 13）。GDScript 重名会让**整个脚本解析失败**。
+	var dash_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
+
+	# ---- (a) 站在它的扑击直线上 ⇒ 破土那一口咬中 ----
+	var reached_dash: bool = await _wait_for_telegraph_of(&"dash_bite", 25.0)
+	_check(reached_dash, "轮到④潜行突袭并进入前摇（表 2 首招）")
+	var damage_before_dash: int = _target.damage_taken
+	# 0.35 前摇 + 0.2 判定 ⇒ 1.0 s 足够看到那一口结算
+	await _step(1.0)
+	_check(_target.damage_taken > damage_before_dash,
+		"站在它的扑击直线上 ⇒ 破土那一口咬中（累计伤害 %d → %d）"
+			% [damage_before_dash, _target.damage_taken])
+
+	# ---- (b) 前摇里**侧移**让出走廊 ⇒ 这一口咬空 ----
+	# 摆位刻意选在"老圆形判定会命中、长条不会"的临界点上：
+	#   沿向 3.0 m（≤ rect_length 6.0）＋ 侧向 2.5 m（> 半宽 1.3）
+	#   ⇒ 到它的距离 ≈ 3.9 m < 老的判定半径 4.0 —— 若判定还是圆形，这一口必然中。
+	# 所以这条断言同时钉死了两件事：形状**真的是长条**、且朝向**真的定格了**
+	#   （facing_locked 若失效，它会扭头对准新位置 ⇒ 侧移等于没躲 ⇒ 红灯）。
+	# ⚠ 摆位必须在前摇里做完：判定段第一帧就结算，那时再动已经晚了。
+	_place_target_at(5.0)
+	var found_dash_telegraph: bool = false
+	var waited_dash: float = 0.0
+	while waited_dash < 30.0:
+		await physics_frame
+		waited_dash += dash_frame
+		# 顺手补血：这一轮要等一整圈（④→①→②→③ ≈ 9.6 s）
+		_target.revive()
+		if _boss.current_attack_id() == &"dash_bite" \
+				and _boss.get_state() == BossSandwormState.State.TELEGRAPH:
+			found_dash_telegraph = true
+			break
+	_check(found_dash_telegraph, "等到下一轮④的前摇")
+	var lock_dir: Vector3 = _boss.facing_direction()
+	var stand_pos: Vector3 = _boss.global_position
+	var lateral_axis: Vector3 = Vector3(-lock_dir.z, 0.0, lock_dir.x)
+	_target.global_position = Vector3(
+		stand_pos.x + lock_dir.x * 3.0 + lateral_axis.x * 2.5, 0.0,
+		stand_pos.z + lock_dir.z * 3.0 + lateral_axis.z * 2.5)
+	# 摆完位要**再过一帧**才断言朝向：_physics_process 在这一帧里才有机会扭头，
+	# 摆位当帧就断言等于在测"摆位之前"的朝向，永远绿灯（同用例 16 踩过的退化成常量）
+	await physics_frame
+	_check(absf(_boss.facing_direction().dot(lock_dir) - 1.0) < 0.001,
+		"前摇期间朝向锁住（facing_locked ⇒ 它不会扭头对准新位置）")
+	var damage_before_dash_dodge: int = _target.damage_taken
+	await _step(1.0)
+	_check(_target.damage_taken == damage_before_dash_dodge,
+		"侧移 2.5 m 让出长条 ⇒ 这一口咬空（伤害停在 %d；按圆形半径 4.0 本该命中）"
+			% damage_before_dash_dodge)
+	_place_target_at(3.0)
+	_target.revive()
 
 	print("[用例 3] 濒死：保底 1 点生命 + 永久无敌")
 	# ⚠ 必须等它**露头**再打：潜地期间的 take_damage 会被受击窗口挡掉（见用例 14），

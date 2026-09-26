@@ -13,15 +13,20 @@
 #   strike_time     判定：真正扣血的那一小段（只判定一次，不是每帧）
 #   recover_time    后摇：硬直，玩家的输出窗口
 #
-# 判定形状的三种玩法（互斥，见各自的 @export 说明）：
+# 判定形状的四种玩法（互斥，见各自的 @export 说明）：
 #   ① 默认        判定段就地按 radius 量"玩家↔判定圆心"的距离
 #   ② arc_degrees 再叠一层**面前扇形**限制（撕咬：只咬嘴前面的）
 #                 ⇒ 前摇期间地面上会画出**同形状的预警片**（marker_color），
 #                   这是它的视觉信号：2026-09-26 用户反馈"撕咬不够明显"加上的
-#   ③ projectile  判定段改成**射弹道**出去，命中与扣血都归弹道管
+#   ③ rect_length 判定改成**面前一条长条矩形**（突袭：扑出去的那条直线上才咬得到）
+#                 ⇒ 同样会自动画出**同形状的预警片**（一条跟着它走的走廊）
+#   ④ projectile  判定段改成**射弹道**出去，命中与扣血都归弹道管
 #                 （吐沙：躲的是飞行段，不是前摇段）
 #                 ⇒ 配 projectile_count > 1 就是**连吐**：逐发瞄准玩家当前位置，
 #                   站着不动全吃、持续换位才能甩掉后面的
+#
+# ⚠ ②（扇形）与 ③（长条）要真的"躲得掉"，前提都是**朝向不跟着玩家转**：
+#   撕咬靠"定身招不前摇转向"天然锁住，突袭靠 facing_locked 显式锁住。
 #
 # 数值一律 @export，方便实机边打边调；招式表在各自 Boss 脚本里用
 # make({...}) 声明（见 sandworm.gd）。
@@ -48,6 +53,24 @@ extends Resource
 ## ⚠ 朝向在**开始前摇那一刻就锁住了**（定身招不前摇转向）⇒ 玩家绕到它背后就能躲开这一口。
 ##   想让它咬的过程中跟着你转头，把 move_scale 调 > 0（代价是它会边走边转）。
 @export var arc_degrees: float = 0.0
+## **长条矩形的长度**：从判定圆心沿"面朝方向"往前伸出去多少米。
+## 与 rect_width 一起 > 0 才生效（生效后 radius 不再参与判定）。
+##
+## ④潜行突袭用它：从地底高速窜出来扑一口，咬到的是**它扑出去那条直线上的东西**，
+## 站在它侧后方的玩家是安全的 —— 这正是"长条"相对"圆圈"多出来的那条活路。
+## ⚠ 只往前延伸、**不往身后延伸**：贴脸重合（沿向 ≈ 0）算命中，背后算落空。
+@export var rect_length: float = 0.0
+## **长条矩形的宽度**（左右各占一半）。玩家碰撞体半径约 0.4 m ⇒ 别配得比 1.0 还窄，
+## 否则"明明在它正前方却擦肩而过"会变成随机事件；配宽了就等于回到圆圈。
+@export var rect_width: float = 0.0
+## **朝向锁定**：true ⇒ "面朝方向"在决定出招那一刻定格，前摇/判定/后摇都不再修正。
+##
+## ⚠ 突进类招（配了 move_scale > 0）**必须**开，而且它**同时锁住突进方向** ——
+##   移动方向就是"面朝方向"，两者一起定死，它才会沿一条**直线**扑出去。
+##   少锁任何一个（只锁朝向 ⇒ 它照样拐弯追人；只锁方向 ⇒ 它照样扭头对准你），
+##   扇形/长条就都会永远罩着玩家 ⇒ 等于必中、形状形同虚设。
+## 默认关：只要 move_scale = 0（定身招），前摇本来就不转向，开不开都没差别。
+@export var facing_locked: bool = false
 ## 命中扣多少血（玩家护甲会再减免，但至少掉 1）
 @export var damage: int = 15
 
@@ -137,6 +160,9 @@ static func make(data: Dictionary) -> BossSandwormAttack:
 	attack.radius = float(data.get("radius", attack.radius))
 	attack.height = float(data.get("height", attack.height))
 	attack.arc_degrees = float(data.get("arc_degrees", attack.arc_degrees))
+	attack.rect_length = float(data.get("rect_length", attack.rect_length))
+	attack.rect_width = float(data.get("rect_width", attack.rect_width))
+	attack.facing_locked = bool(data.get("facing_locked", attack.facing_locked))
 	attack.damage = int(data.get("damage", attack.damage))
 	attack.min_range = float(data.get("min_range", attack.min_range))
 	attack.max_range = float(data.get("max_range", attack.max_range))
@@ -177,6 +203,8 @@ func in_range(distance: float) -> bool:
 	return distance >= min_range and distance <= max_range
 
 ## 这一招的预警圈画多大 —— 有区域就用区域半径，否则用判定半径。
+## ⚠ **长条矩形招（is_rect）不看这个值**：它的预警片是"长度 × 宽度"的一条走廊，
+##   由 rect_length / rect_width 直接决定（见基类 _apply_marker_shape）。
 func marker_radius() -> float:
 	if zone_radius > 0.0:
 		return zone_radius
@@ -207,6 +235,17 @@ func is_sector() -> bool:
 ## 扇形的半张角（弧度）—— 判定用"面朝方向 · 指向玩家的方向 ≥ cos(半张角)"
 func half_arc_radians() -> float:
 	return deg_to_rad(clampf(arc_degrees, 0.0, 360.0) * 0.5)
+
+
+## 是不是"长条矩形"判定（沿面朝方向前伸的一条走廊）。
+## 生效后 radius / arc_degrees **都不再参与判定** —— 形状只有这一种，不许叠加。
+func is_rect() -> bool:
+	return rect_length > 0.0 and rect_width > 0.0
+
+
+## 长条矩形的半宽。判定用"侧向偏移的绝对值 ≤ 它"。
+func rect_half_width() -> float:
+	return rect_width * 0.5
 
 
 ## 是不是"射出弹道"的招（判定段从嘴里射一发，命中由弹道自己负责）
@@ -264,6 +303,10 @@ func describe() -> String:
 	]
 	if is_sector():
 		line += " 扇形%.0f°" % arc_degrees
+	if is_rect():
+		line += " 长条%.1fm×%.1f" % [rect_length, rect_width]
+	if facing_locked:
+		line += " [朝向锁定]"
 	if has_projectile():
 		line += " 弹道%.0fm/s(命中半径%.1f)" % [projectile_speed, projectile_hit_radius]
 		if shot_count() > 1:

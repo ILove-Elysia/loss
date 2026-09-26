@@ -22,17 +22,23 @@
 #      它平时在地下潜行，受击碰撞体也一起关着 ⇒ 玩家**看得见但打不到**。
 #      判据只有 _is_surfaced() 一处，碰撞层开关与占位美术的埋深都从它派生 ——
 #      三者共用一个判据，就不会出现"看着在地上却打不到"这种自相矛盾。
-#   5. **判定形状有三种**（字段都在 BossSandwormAttack）：就地圆形 / 面前扇形
-#      （arc_degrees，基准是 **_facing 逻辑朝向**）/ 弹道（projectile_speed，
-#      发射出去之后命中与扣血都归 boss_sandworm_spit.gd 管；
-#      projectile_count > 1 就是**连吐**，判定段按节拍射满这么多发）。
-#      ⚠ 扇形与弹道的朝向一律**不许读 Visual** —— Visual 是表现层，
+#   5. **判定形状有四种**（字段都在 BossSandwormAttack）：就地圆形 / 面前扇形
+#      （arc_degrees）/ **长条矩形**（rect_length×rect_width，沿 _facing 前伸的一条
+#      走廊）/ 弹道（projectile_speed，发射出去之后命中与扣血都归
+#      boss_sandworm_spit.gd 管；projectile_count > 1 就是**连吐**）。
+#      ⚠ 扇形、矩形与弹道的朝向一律**不许读 Visual** —— Visual 是表现层，
 #        接正式美术时会换成 SpriteFacing，判定不能跟着一起改。
+#      ⚠ 形状要真的"躲得掉"，前提是**朝向不跟着玩家转**：定身招天然如此，
+#        配了 move_scale 的突进招必须显式开 facing_locked —— 它同时锁住
+#        "朝向 + 突进方向"，让那一扑走成**直线**（见 _process_attack）。
 #   6. **前摇必须有"看得见的信号"**（2026-09-26 用户反馈"撕咬释放时不够明显"）：
-#      · 地面预警片 ZoneFx（**top_level**，钉在世界坐标上）：区域招画圆、扇形招画扇形，
-#        形状与朝向都和判定同源（见 _apply_marker_shape / _marker_yaw）——
+#      · 地面预警片 ZoneFx（**top_level** 挂在世界坐标上）：区域招画圆、扇形招画扇形、
+#        长条招画走廊，形状与朝向都和判定同源（见 _apply_marker_shape / _marker_yaw）——
 #        玩家要一眼看懂"**哪块地**危险"，而不只是"它要出手了"；
 #      · 前摇体色**脉动**而不是静态变红（见 _refresh_body_color）。
+#      · ⚠ 预警片"钉死"还是"跟着走"由 aims_at_player 决定：朝地面打的招（流沙）
+#        必须钉死（否则圈追着玩家跑＝必中）；以**自己**为原点的招（撕咬/突袭）
+#        必须跟着走（判定原点就是它本人，见 _update_zone_fx）。
 #
 # 与现有系统的边界：
 #   - **不进 "enemy" 组**，用 "boss" 组：
@@ -181,17 +187,26 @@ var _jaw_material: StandardMaterial3D = null
 var _hurt_flash: float = 0.0
 var _debug_timer: float = 0.0
 var _gone_emitted: bool = false
-## 地面预警片。**top_level = true** 挂在世界坐标上，不跟着沙虫走 ——
-## 否则圈会追着玩家跑，等于取消了"跑出去就能躲"。
-## 两个形状共用这一套（2026-09-26 起）：
+## 地面预警片。**top_level = true** 挂在世界坐标上（位置每帧由 _update_zone_fx 决定）。
+## 三种形状共用这一套（2026-09-26 起）：
 ##   · 圆形区域招（③流沙）→ 圆盘（CylinderMesh，改半径即可）；
-##   · **面前扇形**（①撕咬）→ 手工拼的平面扇形（ArrayMesh，见 _build_arc_mesh）。
+##   · **面前扇形**（①撕咬）→ 手工拼的平面扇形（ArrayMesh，见 _build_arc_mesh）；
+##   · **长条矩形**（④潜行突袭）→ 手工拼的平面矩形（ArrayMesh，见 _build_rect_mesh）。
+##
+## ⚠ "钉死"还是"跟着沙虫走"由招式的 aims_at_player 决定（见 _update_zone_fx）：
+##   · aims_at_player（流沙：落点钉在玩家脚下）⇒ **必须钉死**，
+##     否则圈会追着玩家跑，等于取消了"跑出去就能躲"；
+##   · 否则（撕咬/突袭：判定原点就是它本人）⇒ **必须跟着走**，
+##     否则④一边在地下冲、预警片却留在了起手的地方，玩家看到的是废信息。
 var _zone_fx: Node3D = null
 var _zone_disc: MeshInstance3D = null
 var _zone_disc_mesh: CylinderMesh = null
 ## 扇形网格按 (半径, 张角) 缓存 —— 同一招反复出时不必每帧重建，改表尺寸变了才重建
 var _zone_arc_mesh: ArrayMesh = null
 var _zone_arc_size: Vector2 = Vector2.ZERO
+## 长条矩形网格按 (长度, 宽度) 缓存，同上
+var _zone_rect_mesh: ArrayMesh = null
+var _zone_rect_size: Vector2 = Vector2.ZERO
 var _zone_mat: StandardMaterial3D = null
 
 # ============================================
@@ -384,8 +399,14 @@ func _process_attack(delta: float) -> void:
 		var body: Node3D = player_body()
 		if body != null:
 			var dir: Vector3 = _horizontal_dir(global_position, body.global_position)
-			_face(dir)
-			_move_dir = dir
+			# ⚠ 突进招（facing_locked）把**朝向与突进方向一起定住**：
+			#   它只沿"决定出招那一刻"的那条直线扑出去，既不修正姿态、也不再拐弯。
+			#   这正是①的扇形 / ④的长条矩形能"躲得掉"的前提 ——
+			#   只要还在每帧追着人转向**或拐弯**，形状就永远罩着玩家 ⇒ 等于必中。
+			#   （2026-09-26 只锁朝向没锁方向，回归用例 18 立刻抓到"侧移躲不掉"。）
+			if not _attack.facing_locked:
+				_face(dir)
+				_move_dir = dir
 
 	# 上面几行（尤其 _check_leash）可能已经把状态推走 ⇒ 只有确实还在招式三段里，
 	# 下面读 _attack.xxx 才是安全的。这是"招式播到一半绝不换表/丢招"的守门员。
@@ -398,7 +419,7 @@ func _process_attack(delta: float) -> void:
 			# 同时把地面圈画出来。玩家要在这段时间里逆着拉力走出去才能躲开。
 			if _attack.has_zone():
 				_pull_into_zone(delta, _attack)
-			if _attack.aims_at_player or _attack.has_zone() or _attack.is_sector():
+			if _has_marker(_attack):
 				_update_zone_fx(_attack)
 			if _state_time >= _attack.telegraph_time:
 				_enter_strike()
@@ -594,10 +615,11 @@ func _start_attack(attack: BossSandwormAttack) -> void:
 	_strike_origin = attack.strike_origin_from(global_position, player_position())
 	attack_started.emit(attack.attack_id)
 	_debug("选招 %s（%s）" % [attack.attack_id, attack.describe()])
-	# 地面预警片：区域招画圈（流沙）、**扇形招画扇形**（撕咬的"嘴前面这块地"）。
-	# 撕咬那一片是 2026-09-26 用户反馈"不够明显、难以察觉"补的 ——
+	# 地面预警片：区域招画圈（流沙）、扇形招画扇形（撕咬的"嘴前面这块地"）、
+	# 长条招画走廊（突袭的"它要扑出去的那条线"）。
+	# 这是 2026-09-26 用户反馈"撕咬不够明显、难以察觉"补的 ——
 	# 光有"体色变红"玩家不知道该往哪躲，画出来才一眼看懂。
-	if attack.aims_at_player or attack.has_zone() or attack.is_sector():
+	if _has_marker(attack):
 		_show_zone(attack, _strike_origin)
 	_set_state(BossSandwormState.State.TELEGRAPH)
 
@@ -620,8 +642,11 @@ func _enter_strike() -> void:
 ## 判定生效 —— "这一招的判定段要做什么"的总入口，**三条岔路**：
 ##   · has_zone()       → 圆形区域吞噬（流沙）：判"圈里还有谁"
 ##   · has_projectile() → 弹道（吐沙）：只负责**射出去**，命中归弹道自己
-##   · 其余             → 就地按 radius（+ 可选 arc_degrees 扇形）判玩家，
-##                        距离用玩家**本体**（player/Physics）算，不是根节点
+##   · 其余             → 就地判定。距离用玩家**本体**（player/Physics）算，不是根节点；
+##                        形状再分三种（见 _in_attack_rect / _in_attack_arc）：
+##                          · 长条矩形 is_rect      → 只认"面前那条走廊"
+##                          · 面前扇形 is_sector    → 圆形 ∩ 半张角
+##                          · 纯圆形（默认）        → 只量距离
 ##
 ## ⚠⚠ 本函数**会在执行途中被同步重入**，这是本文件最危险的一处：
 ##      body.take_damage() 可能把玩家打死 ⇒ 玩家同步发 died 信号
@@ -650,17 +675,25 @@ func _apply_attack_damage() -> void:
 		_debug("招式 %s 落空（玩家不在场）" % attack.attack_id)
 		return
 	var origin: Vector3 = _damage_origin(attack)
-	var distance: float = _horizontal_distance(origin, body.global_position)
-	if distance > attack.radius:
-		_debug("招式 %s 落空（玩家 %.1f m 在 %.1f m 判定外）"
-			% [attack.attack_id, distance, attack.radius])
-		return
-	# 面前扇形（撕咬）：够得着还不够，还得在**嘴前面**。朝向在前摇开始就锁住了，
-	# 所以玩家绕到背后就能躲开这一口 —— 这就是扇形存在的意义
-	if not _in_attack_arc(attack, origin, body.global_position):
-		_debug("招式 %s 落空（玩家绕到了 %.0f° 扇形的背后）"
-			% [attack.attack_id, attack.arc_degrees])
-		return
+	# 长条矩形（④潜行突袭）：判的是"**它正前方那条走廊**里有没有人"，不是"离它多近"。
+	# `radius` 对它无意义（形状只有一种，不许叠加），所以整块判定单独走一条分支。
+	if attack.is_rect():
+		if not _in_attack_rect(attack, origin, body.global_position):
+			_debug("招式 %s 落空（玩家不在 %.1f×%.1f m 的长条里）"
+				% [attack.attack_id, attack.rect_length, attack.rect_width])
+			return
+	else:
+		var distance: float = _horizontal_distance(origin, body.global_position)
+		if distance > attack.radius:
+			_debug("招式 %s 落空（玩家 %.1f m 在 %.1f m 判定外）"
+				% [attack.attack_id, distance, attack.radius])
+			return
+		# 面前扇形（撕咬）：够得着还不够，还得在**嘴前面**。朝向在前摇开始就锁住了，
+		# 所以玩家绕到背后就能躲开这一口 —— 这就是扇形存在的意义
+		if not _in_attack_arc(attack, origin, body.global_position):
+			_debug("招式 %s 落空（玩家绕到了 %.0f° 扇形的背后）"
+				% [attack.attack_id, attack.arc_degrees])
+			return
 	if not body.has_method("take_damage"):
 		return
 	# ↓↓↓ 这一行可能就是上面说的"重入点"（打死玩家 → 状态被改 → _attack 变 null）
@@ -691,6 +724,27 @@ func _in_attack_arc(attack: BossSandwormAttack, origin: Vector3, target_position
 	if to_target == Vector3.ZERO:
 		return true
 	return _facing.dot(to_target) >= cos(attack.half_arc_radians())
+
+
+## 目标在不在"**面前的长条矩形**"里（④潜行突袭）。
+##
+## 做法：把"Boss → 目标"的位移在**朝向坐标系**里分解成两个分量 ——
+##   · along = 沿 _facing 的分量（正 = 前面，负 = 背后）
+##   · side  = 垂直于 _facing 的分量（取绝对值 ⇒ 左右对称）
+## 然后判 `0 ≤ along ≤ rect_length` 且 `side ≤ rect_width / 2`。
+##
+## ⚠ 用**位移分解**而不是"先算单位方向再点乘"：贴脸重合时位移是零向量，
+##   分解得到 along = side = 0 ⇒ 算命中（贴脸不该因为除零而落空）；
+##   若走 _horizontal_dir 会拿到 ZERO 再点乘得 0 ⇒ 贴脸反而"永远在扇形外"。
+## ⚠ 基准同样是 `_facing`（逻辑朝向）。突进招若不锁朝向（facing_locked），
+##   它一路扭头追玩家 ⇒ 矩形永远罩着玩家 ⇒ 必中、形状形同虚设。
+func _in_attack_rect(attack: BossSandwormAttack, origin: Vector3, target_position: Vector3) -> bool:
+	var offset: Vector3 = Vector3(
+		target_position.x - origin.x, 0.0, target_position.z - origin.z)
+	var along: float = offset.dot(_facing)
+	# 与 _facing 垂直的单位向量（平面内转 90°）：_facing 已归一化 ⇒ 它也是单位向量
+	var side: float = absf(offset.dot(Vector3(_facing.z, 0.0, -_facing.x)))
+	return along >= 0.0 and along <= attack.rect_length and side <= attack.rect_half_width()
 
 
 ## 打一发沙弹（吐沙）。弹道脚本负责飞行、命中、扣血与自毁；本函数只管发射。
@@ -1067,26 +1121,47 @@ func _ensure_zone_fx() -> void:
 	_zone_fx = root
 
 
+## 这一招要不要画地面预警片。
+##   · 区域招（流沙）：圈就是它的判定范围 ⇒ 必须画；
+##   · 面前扇形（撕咬）/ 长条矩形（突袭）：形状就是判定范围 ⇒ 必须画；
+##   · 弹道招（吐沙）**不画**：它的伤害落在飞行段，地上没有"安全区"可言
+##     （老版给它画过落点圈，2026-09-26 去掉 aims_at_player 时一起删了）。
+func _has_marker(attack: BossSandwormAttack) -> bool:
+	return attack.aims_at_player or attack.has_zone() \
+		or attack.is_sector() or attack.is_rect()
+
+
+## 显示预警片。`center` 只是**初始**位置 —— 以"自己"为判定原点的招（撕咬/突袭）
+## 随后每帧由 _update_zone_fx 把它拉到沙虫当前的位置上（见那里的说明）。
 func _show_zone(attack: BossSandwormAttack, center: Vector3) -> void:
-	var radius: float = attack.marker_radius()
-	if radius <= 0.0:
+	if not _has_marker(attack):
 		return
 	_ensure_zone_fx()
 	if _zone_fx == null:
 		return
 	_zone_mat.albedo_color = attack.marker_color()
-	_apply_marker_shape(attack, radius)
+	_apply_marker_shape(attack, attack.marker_radius())
 	# top_level ⇒ position / rotation 都是世界坐标
 	_zone_fx.position = Vector3(center.x, center.y + 0.06, center.z)
 	_zone_fx.rotation = Vector3(0.0, _marker_yaw(attack), 0.0)
 	_zone_fx.visible = true
 
 
-## 预警片的形状：圆形区域招用圆盘（复用同一个 CylinderMesh，只改半径）；
-## 扇形招用一块手工拼的平面扇形。扇形网格按 (半径, 张角) 缓存 ——
-## 同一招反复出时不用每帧重建，改了招式表尺寸才会重建。
+## 预警片的形状（三种）：
+##   · 圆形区域招（流沙）→ 圆盘（复用同一个 CylinderMesh，只改半径）；
+##   · 面前扇形（撕咬）  → 手工拼的平面扇形，按 (半径, 张角) 缓存；
+##   · 长条矩形（突袭）  → 手工拼的平面矩形，按 (长度, 宽度) 缓存。
+## 缓存的意义：同一招反复出时不必每帧重建，只有改了招式表的尺寸才会重建。
 func _apply_marker_shape(attack: BossSandwormAttack, radius: float) -> void:
 	if _zone_disc == null:
+		return
+	# 长条矩形：沿局部 +Z 伸出去的一条走廊（长度 × 宽度）
+	if attack.is_rect():
+		var rect_size: Vector2 = Vector2(attack.rect_length, attack.rect_width)
+		if _zone_rect_mesh == null or _zone_rect_size != rect_size:
+			_zone_rect_mesh = _build_rect_mesh(attack.rect_length, attack.rect_width)
+			_zone_rect_size = rect_size
+		_zone_disc.mesh = _zone_rect_mesh
 		return
 	if not attack.is_sector():
 		_zone_disc.mesh = _zone_disc_mesh
@@ -1100,14 +1175,14 @@ func _apply_marker_shape(attack: BossSandwormAttack, radius: float) -> void:
 	_zone_disc.mesh = _zone_arc_mesh
 
 
-## 预警片的 yaw。**扇形必须跟着逻辑朝向 `_facing` 转** —— 它和判定用的是同一个朝向，
-## 否则会出现"预警片朝东、判定朝西"这种自相矛盾（与文件头第 4 条铁律同一个口径）。
-## 圆盘没有方向，恒为 0。
+## 预警片的 yaw。**扇形与长条矩形都必须跟着逻辑朝向 `_facing` 转** —— 它们和判定
+## 用的是同一个朝向，否则会出现"预警片朝东、判定朝西"这种自相矛盾
+## （与文件头第 4 条铁律同一个口径）。圆盘没有方向，恒为 0。
 ##
-## ⚠ 定身招（撕咬）在前摇里不转向 ⇒ 这里读到的 _facing 是"决定咬你的那一刻"的朝向，
-##   和判定完全一致；将来若给撕咬加了 move_scale，_update_zone_fx 会每帧把它转过来。
+## ⚠ 定身招（撕咬）在前摇里不转向 ⇒ 这里读到的是"决定咬你的那一刻"的朝向；
+##   突进招（④，facing_locked）同理 —— 朝向在起手就定格，预警片不会甩来甩去。
 func _marker_yaw(attack: BossSandwormAttack) -> float:
-	if not attack.is_sector():
+	if not attack.is_sector() and not attack.is_rect():
 		return 0.0
 	return atan2(_facing.x, _facing.z)
 
@@ -1131,8 +1206,30 @@ static func _build_arc_mesh(radius: float, arc_degrees: float) -> ArrayMesh:
 	return surface.commit()
 
 
+## 手工拼一块**水平矩形平面**：从原点沿局部 +Z 伸出 length、左右各占 width 的一半。
+##   · 两个三角形拼成，顶点顺序无所谓（材质是 UNSHADED + 关背面剔除，用不到法线）；
+##   · 与扇形同一个挂法：贴在地上的一层色块，判定范围长什么样就画成什么样。
+static func _build_rect_mesh(length: float, width: float) -> ArrayMesh:
+	var surface: SurfaceTool = SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var half: float = width * 0.5
+	surface.add_vertex(Vector3(-half, 0.0, 0.0))
+	surface.add_vertex(Vector3(half, 0.0, 0.0))
+	surface.add_vertex(Vector3(half, 0.0, length))
+	surface.add_vertex(Vector3(-half, 0.0, 0.0))
+	surface.add_vertex(Vector3(half, 0.0, length))
+	surface.add_vertex(Vector3(-half, 0.0, length))
+	return surface.commit()
+
+
 ## 越接近爆发越暗、越不透明 —— 给玩家一个"还剩多久"的读数。
-## 扇形还要每帧跟着逻辑朝向转（定身招不会变，但配了 move_scale 就会）。
+##
+## 位置与朝向也在这里维护，"跟着走"还是"钉死"取决于**判定原点在哪**
+## （和 _damage_origin 是同一个口径）：
+##   · 判定原点 = 玩家（aims_at_player，流沙）⇒ 预警片**钉在施放那一刻的落点**上。
+##     跟着玩家跑就等于"永远罩着你"，那条"跑出圈就躲开"的活路会被取消掉。
+##   · 判定原点 = 它自己（撕咬 / 突袭）⇒ 预警片**每帧跟到它当前的位置**。
+##     否则④一边在地下高速冲刺、预警片却停在起手的地方 —— 玩家看到的是废信息。
 func _update_zone_fx(attack: BossSandwormAttack) -> void:
 	if _zone_fx == null or not _zone_fx.visible:
 		return
@@ -1144,7 +1241,10 @@ func _update_zone_fx(attack: BossSandwormAttack) -> void:
 	_zone_mat.albedo_color = Color(
 		base.r * dim, base.g * dim, base.b * dim,
 		clampf(base.a + 0.35 * progress, 0.0, 1.0))
-	if attack.is_sector():
+	if not attack.aims_at_player:
+		_zone_fx.position = Vector3(
+			global_position.x, global_position.y + 0.06, global_position.z)
+	if attack.is_sector() or attack.is_rect():
 		_zone_fx.rotation.y = _marker_yaw(attack)
 
 
