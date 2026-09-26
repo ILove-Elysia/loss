@@ -11,7 +11,8 @@ ambient_light_color = Color(0.83, 0.83, 0.83, 1)
 ambient_light_energy = 9.0
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_sand"]
-albedo_color = Color(0.78, 0.68, 0.46, 1)
+albedo_color = Color(0.95, 0.88, 0.45, 1)
+shading_mode = 0
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(168, 1, 168)
@@ -26,6 +27,7 @@ height = 0.8
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_nest"]
 albedo_color = Color(0.35, 0.28, 0.2, 1)
+shading_mode = 0
 
 [node name="SandwormTest" type="Node3D"]
 script = ExtResource("2_arena")

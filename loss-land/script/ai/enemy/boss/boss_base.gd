@@ -84,9 +84,18 @@ signal boss_gone(boss_id: StringName)
 @export var rise_speed: float = 6.0
 
 @export_group("占位外观")
-@export var body_color: Color = Color(0.82, 0.70, 0.42)
-@export var hurt_color: Color = Color(1.0, 0.86, 0.86)
+## 常态体色。⚠ 占位材质走 UNSHADED ⇒ 这几个色值是**原样输出**的，
+## 挑色时按"屏幕上想看到什么"直接定，不用再考虑光照会被打亮多少。
+## 刻意选**深沙褐**：地形瓦片色普遍偏亮（草原 0.70,0.85,0.50 / 沙滩 0.98,0.92,0.68
+## / 沙地 0.95,0.88,0.45），体色压暗一档才能在**任何**地形上都看得出轮廓。
+## 原先的 (0.82,0.70,0.42) 和沙地/沙滩瓦片色几乎一样，就算不打爆也糊在一起。
+@export var body_color: Color = Color(0.58, 0.45, 0.26)
+## 受击闪光色。刻意用**暖红**而不是近白：原先的 (1.0,0.86,0.86) 是近白色，
+## 一旦环境光把体色打爆成白，受击就完全看不出来（2026-09-26）
+@export var hurt_color: Color = Color(1.0, 0.66, 0.52)
 @export var fallen_color: Color = Color(0.52, 0.50, 0.55)
+## 下颚比体色暗多少（0~1）。暗一档才一眼看得出头朝哪边
+@export var jaw_darken: float = 0.32
 @export var hurt_flash_time: float = 0.12
 
 @export_group("调试")
@@ -114,6 +123,7 @@ var _player_cache: Node3D = null
 var _died_hooked: bool = false
 var _visual: Node3D = null
 var _body_material: StandardMaterial3D = null
+var _jaw_material: StandardMaterial3D = null
 var _hurt_flash: float = 0.0
 var _debug_timer: float = 0.0
 var _gone_emitted: bool = false
@@ -659,17 +669,43 @@ func _seed_cooldown_table(table: Array[BossAttack]) -> void:
 # 表现（占位）
 # ============================================
 
+## 占位材质。**必须 UNSHADED**，理由（2026-09-26 用户反馈"沙虫经常会变成白色看不清"）：
+##   本工程 map.tscn 的环境光是 ambient_light_color(0.83) × ambient_light_energy(9.0)，
+##   受光材质（默认 SHADING_MODE_PER_PIXEL）会被整体抬亮约 2.2 倍 ⇒ **albedo 亮过
+##   0.45 的直接打爆成纯白**。体色 (0.82,0.70,0.42)、亮黄的地面沙色 (0.78~0.95)、
+##   濒死灰 (0.52,0.50,0.55) 全都在这个区间里 —— 沙虫、地面一起变白糊成一片；
+##   连"前摇变红 / 濒死变灰"这些**状态信号**也一起白掉，等于没有信号。
+##   渲染取证实测：体色态/地面像素都是 #ffffff，前摇橙只到 #ffff90。
+##   全工程的地形与海面同样走 UNSHADED（map_generator_3d.gd）—— 保持一致，
+##   而且往后加任何 3D 网格都请照这个来，否则会遇到同一个坑。
 func _setup_placeholder_material() -> void:
 	if _visual == null:
 		return
-	var body_mesh: MeshInstance3D = _visual.get_node_or_null("Body") as MeshInstance3D
-	if body_mesh == null:
-		return
+	var body_mat: StandardMaterial3D = _make_placeholder_material(body_color)
+	var jaw_mat: StandardMaterial3D = _make_placeholder_material(body_color.darkened(jaw_darken))
+	# Visual 下**所有** MeshInstance3D 都要吃到材质：漏一个就会退回引擎默认的
+	# 白色**受光**材质，又变成一块白（Jaw 原先就是这么漏的）
+	var meshes: Array[MeshInstance3D] = []
+	_collect_meshes(_visual, meshes)
+	for mesh in meshes:
+		var is_jaw: bool = String(mesh.name).findn("Jaw") >= 0
+		mesh.material_override = jaw_mat if is_jaw else body_mat
+	_body_material = body_mat
+	_jaw_material = jaw_mat
+
+
+func _make_placeholder_material(base: Color) -> StandardMaterial3D:
 	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = body_color
-	material.roughness = 0.9
-	body_mesh.material_override = material
-	_body_material = material
+	material.albedo_color = base
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return material
+
+
+func _collect_meshes(node: Node, out: Array[MeshInstance3D]) -> void:
+	for child in node.get_children():
+		if child is MeshInstance3D:
+			out.append(child as MeshInstance3D)
+		_collect_meshes(child, out)
 
 
 func _refresh_body_color() -> void:
@@ -685,6 +721,9 @@ func _refresh_body_color() -> void:
 		# 正式美术接入后这一段由动画承担（BossAttack.telegraph_color 只是占位）
 		color = _attack.telegraph_color
 	_body_material.albedo_color = color
+	if _jaw_material != null:
+		# 下颚跟着一起变，但保持"比体色暗一档"的关系
+		_jaw_material.albedo_color = color.darkened(jaw_darken)
 
 
 ## 占位美术的"钻出沙面"：待机埋在 -buried_depth，登场期间抬到 0

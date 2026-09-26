@@ -56,6 +56,11 @@ extends Node3D
 @export var boss_log: bool = true
 
 const DEFAULT_BOSS_SCENE := "res://tscn/prefab/boss/sandworm.tscn"
+## 地形配色的**唯一来源**（地图也用这张表）—— 场地不另抄一份色号，免得地图改了场地不变
+const TERRAIN_TINTS := preload("res://script/map/task_system.gd")
+## 地面铺"沙地"(13) 的瓦片色：场地是沙地战场。注意**地形号仍报草原 10**，
+## 那是给玩家的体温/湿度系统看的（理由见 test/arena_flat_map_gen.gd），两者不冲突
+const GROUND_TERRAIN := 13
 
 var _boss: BossBase = null
 var _label: Label = null
@@ -69,6 +74,7 @@ func _ready() -> void:
 	_nest = get_node_or_null("Nest") as Node3D
 	_spawn_boss()
 	_fit_ground()
+	_ensure_unshaded_materials()
 	_build_rings()
 	_note("场地就绪：T 靠近巢穴 / H 拖远 / K 自杀 / W 唤起 / 1・2 改血量 / 9 打到 1 血 / R 重置")
 
@@ -224,6 +230,7 @@ func _reset_all() -> void:
 	WorldState.reset()
 	_spawn_boss()
 	_fit_ground()
+	_ensure_unshaded_materials()
 	_build_rings()
 	_note("已重置：世界旗标清空、沙虫重生、场地按当前数值重铺")
 
@@ -262,6 +269,46 @@ func _fit_ground() -> void:
 			shape_copy.size = dims
 			shape_node.shape = shape_copy
 		shape_node.position = offset
+
+
+## 场地外观归一化。两件事：
+##
+## ① 地面 / 巢穴土堆的材质改成 UNSHADED —— 本工程的环境光是 ambient_light_color(0.83)
+##    × energy(9.0)（map.tscn），受光面被整体抬亮约 2.2 倍 ⇒ **albedo 亮过 0.45 的
+##    直接打爆成纯白**。原先的沙色地面 (0.78,0.68,0.46) 和沙虫体色都在这个区间：
+##    地面和沙虫一起变白糊成一片，连"前摇变红 / 濒死变灰"这些状态信号也一起白掉
+##    （2026-09-26 用户反馈"沙虫经常会变成白色看不清"；渲染取证实测两处像素都是 #ffffff）。
+##    真地图里地形 / 海面一律 UNSHADED（map_generator_3d.gd）—— 场地必须跟它一致，
+##    否则在场地里看到的画面跟实机不是一回事，测了个寂寞。
+##
+## ② 地面换成地图"沙地"瓦片色：色号**与 task_system.TERRAIN_COLOR_MAP 同源**，
+##    不另抄一份。场地的地形号仍报草原(10)，那是给玩家的体温/湿度系统看的
+##    （理由见 test/arena_flat_map_gen.gd），两者不冲突。
+##
+## ⚠ 为什么写在脚本里而不是只写进 .tscn：本场景的标签页在编辑器里开着，外部改 .tscn
+##   会被编辑器用内存里的版本重新落盘覆盖（本工程已踩过 3 次）。运行时强制就绕开了，
+##   .tscn 里那两个材质只是"在编辑器里看着对"。
+func _ensure_unshaded_materials() -> void:
+	_paint_material("Ground/Mesh", TERRAIN_TINTS.TERRAIN_COLOR_MAP[GROUND_TERRAIN])
+	_paint_material("Nest/NestMound", null)
+
+
+## color 传 null = 保留 .tscn 里配的固有色，只改着色方式
+func _paint_material(path: String, color: Variant) -> void:
+	var mesh_node: MeshInstance3D = get_node_or_null(path) as MeshInstance3D
+	if mesh_node == null:
+		return
+	var mat: BaseMaterial3D = null
+	var src: BaseMaterial3D = mesh_node.material_override as BaseMaterial3D
+	if src != null:
+		# 复制再改：与 _fit_ground() 同理，.tscn 里的 SubResource 是场景共享的
+		mat = src.duplicate() as BaseMaterial3D
+	else:
+		mat = StandardMaterial3D.new()
+	if color is Color:
+		mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mesh_node.material_override = mat
 
 
 ## 玩家（Physics 子节点）到巢穴的平面距离 —— **这就是领地（脱战）判据**
