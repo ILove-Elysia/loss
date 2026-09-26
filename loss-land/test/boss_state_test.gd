@@ -23,6 +23,9 @@
 #         站在它的扑击直线上 ⇒ 命中；前摇里**侧移**出走廊 ⇒ 咬空 ——
 #         同一个位置若按老的圆形判定（半径 4.0）本该命中，所以这条断言
 #         同时钉死了"形状真的是长条"，以及"朝向在起手就定格"（facing_locked）
+# #19 是 2026-09-26 按用户反馈"受击范围过大 / 离很远就空放技能"补的：
+#     受击体半径 ≤ 0.85（玩家最远够得着的距离 3.3 m → 2.8 m）；
+#     玩家在 12 m 外**整段时间一招都不放**（出手距离上限），贴近到 3 m 又能立刻出招
 #
 # 关键设计：
 #   · 直接实例化 Boss，不加载 map.tscn —— 那边一次地图生成要 12~20 秒；
@@ -778,6 +781,76 @@ func _run_cases() -> void:
 	_check(_target.damage_taken == damage_before_dash_dodge,
 		"侧移 2.5 m 让出长条 ⇒ 这一口咬空（伤害停在 %d；按圆形半径 4.0 本该命中）"
 			% damage_before_dash_dodge)
+	print("[用例 19] 受击体尺寸 + 出手距离（2026-09-26 用户反馈）")
+	# 反馈原文：「1.boss受击范围过大，玩家离很远就能打到不合理
+	#           2.boss应该靠近玩家后才开始放技能而不是离很远就开始空放技能」
+	#
+	# ---- ① 受击体尺寸 ----
+	# 玩家挥砍是"以自己为圆心、半径 attack_range(2.0) 的圆柱"（physics.gd），
+	# 所以"玩家能打到它"的圆心距 = 2.0 + 沙虫受击体半径。原值 r1.3 ⇒ 算出来 3.3 m，
+	# 比史莱姆（2.0 + 0.335 = 2.34 m）多出整整 1 m —— 这就是"离很远就能打到"。
+	# ⚠ 这条断言**故意钉死具体数值**：它是用户点名的需求，不是随手调的平衡值。
+	#   半径再收小不会出问题；放大就会亮红灯（那时是需求变了，就该来改这一行）。
+	var body_shape: CollisionShape3D = _boss.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	var body_cyl: CylinderShape3D = null
+	if body_shape != null:
+		body_cyl = body_shape.shape as CylinderShape3D
+	_check(body_cyl != null, "沙虫的受击体是一个圆柱（CollisionShape3D）")
+	if body_cyl != null:
+		_check(body_cyl.radius <= 0.85,
+			"受击体半径 %.2f ≤ 0.85 ⇒ 玩家最远 ≈ %.1f m 才够得着（原 r1.3 ⇒ 3.3 m）"
+				% [body_cyl.radius, 2.0 + body_cyl.radius])
+
+	# ---- ② 出手距离：玩家在远处时只潜行逼近、不放技能 ----
+	# 原表 max_range = ②16 / ③20 ⇒ 站在十几米外它照样吐沙、放流沙，就是"空放"。
+	# 收成 ①4.5 / ②5.0 / ③10.0 / ④5.0 之后，12 m 处**四招全部够不着**（轮转第一条
+	# 规则：够不着就返回 null 且不推进指针）⇒ 它只能继续潜行过来。
+	#
+	# ⚠ 这一段的观测量是"有没有进过招式三段"，所以必须**同时把两边都钉住**：
+	#   · 假玩家每帧摆回离巢穴 12 m —— 否则它一逼近就进了 ③ 的 10 m 射程；
+	#   · 沙虫每帧按回巢穴 —— 否则它一路追着"永远在前方 12 m"的玩家跑，
+	#     跑出 leash_radius(24 m) 之后**领地判定会先触发 RETREAT**，测的就不是出手距离了。
+	#   两边都钉住 ⇒ 距离恒为 12.0 m，决策规则被单独拎出来测，没有位移的干扰。
+	var park: Vector3 = _boss.home_position()
+	var far_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
+	_target.revive()
+	_boss.debug_set_all_cooldowns(0.0)
+	# 起手先把上一轮残留的招式播完（用例 18 结束时它可能还在三段里），
+	# 否则"整段不许出招"会被那半招误报。
+	var settled: bool = false
+	var waited_settle: float = 0.0
+	while waited_settle < 8.0:
+		_boss.global_position = Vector3(park.x, _boss.global_position.y, park.z)
+		_target.global_position = Vector3(park.x, 0.0, park.z + 12.0)
+		await physics_frame
+		waited_settle += far_frame
+		_target.revive()
+		if _boss.get_state() == BossSandwormState.State.CHASE \
+				and _boss.current_attack() == null:
+			settled = true
+			break
+	_check(settled, "玩家退到 12 m 外 → 它收招回到追击态")
+	var saw_attack_far: bool = false
+	var saw_chase_far: bool = false
+	var held_far: float = 0.0
+	while held_far < 2.0:
+		_boss.global_position = Vector3(park.x, _boss.global_position.y, park.z)
+		_target.global_position = Vector3(park.x, 0.0, park.z + 12.0)
+		await physics_frame
+		held_far += far_frame
+		_target.revive()
+		var state_far: int = _boss.get_state()
+		if BossSandwormState.is_attack_phase(state_far):
+			saw_attack_far = true
+		if state_far == BossSandwormState.State.CHASE:
+			saw_chase_far = true
+	_check(saw_chase_far, "玩家在 12 m 外 ⇒ 它保持追击态（不是原地发呆）")
+	_check(not saw_attack_far,
+		"玩家在 12 m 外 ⇒ 整整 2 s 一次招都不放（出手距离上限生效；原 max_range 16/20 会照放）")
+	# 反向对照：贴近到射程内**必须**能出招 —— 否则上面那两条可能只是"它整体哑了"。
+	_place_target_at(3.0)
+	var fired_when_close: bool = await _wait_for_attack_phase(6.0)
+	_check(fired_when_close, "贴近到 3 m ⇒ 立刻恢复出招（出手距离是上界，不是把招式关掉）")
 	_place_target_at(3.0)
 	_target.revive()
 

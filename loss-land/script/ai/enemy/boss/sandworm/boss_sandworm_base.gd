@@ -340,6 +340,11 @@ func _is_surfaced() -> bool:
 ##   · 顺带没有"看不见的墙"：埋着的时候它不占碰撞层，玩家能从它上面直接走过去。
 ## 工程内同款做法见 resources/resource_manager.gd 隐藏建筑那段（layer 2 ↔ 0）。
 ## 只在状态切换时调用一次，不必每帧刷。
+##
+## ⚠ **受击体本身多大**不在这里，在 `tscn/prefab/boss/sandworm.tscn` 的 CollisionShape3D 上：
+##   玩家够得着的距离 = 挥砍半径 2.0 + 受击体半径。原 r1.3 ⇒ 3.3 m，被用户判为"离很远就能打到"，
+##   2026-09-26 收成 **r0.8 / h2.0（中心 y=1.0）⇒ ≈2.8 m**（模型不动，见该 .tscn）。
+##   这个尺寸由 test/boss_state_test.gd **用例 19** 钉住，改小了没事、放大就会亮红灯。
 func _refresh_hitbox() -> void:
 	collision_layer = _hit_layer if _is_surfaced() else 0
 
