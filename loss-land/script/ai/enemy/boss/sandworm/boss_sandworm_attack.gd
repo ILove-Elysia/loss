@@ -16,8 +16,12 @@
 # 判定形状的三种玩法（互斥，见各自的 @export 说明）：
 #   ① 默认        判定段就地按 radius 量"玩家↔判定圆心"的距离
 #   ② arc_degrees 再叠一层**面前扇形**限制（撕咬：只咬嘴前面的）
-#   ③ projectile  判定段改成**射一发弹道**出去，命中与扣血都归弹道管
-#                （吐沙：躲的是飞行段，不是前摇段）
+#                 ⇒ 前摇期间地面上会画出**同形状的预警片**（marker_color），
+#                   这是它的视觉信号：2026-09-26 用户反馈"撕咬不够明显"加上的
+#   ③ projectile  判定段改成**射弹道**出去，命中与扣血都归弹道管
+#                 （吐沙：躲的是飞行段，不是前摇段）
+#                 ⇒ 配 projectile_count > 1 就是**连吐**：逐发瞄准玩家当前位置，
+#                   站着不动全吃、持续换位才能甩掉后面的
 #
 # 数值一律 @export，方便实机边打边调；招式表在各自 Boss 脚本里用
 # make({...}) 声明（见 sandworm.gd）。
@@ -98,6 +102,18 @@ extends Resource
 @export var projectile_hit_radius: float = 0.9
 ## 沙弹的飞行距离上限（米）。0 ⇒ 直接沿用 max_range。
 @export var projectile_max_distance: float = 0.0
+## **一次出招连吐几发**（2026-09-26 用户要求"吐沙改为连吐 4 次子弹"）。
+## 1 ⇒ 单发（老行为）；> 1 ⇒ 判定段内按 projectile_interval 的节拍连吐。
+##
+## ⚠ 连发是**逐发瞄准**的：每一发都瞄"那一发出膛的瞬间"玩家在哪 ⇒
+##   站着不动 = 每一发都吃满（代价随发数线性增长）；持续换位才能甩掉后面的。
+##   这正是"连吐"相对"吐一口大的"的手感差别，所以发数别配太多
+##   （4 发 × 0.16 s = 0.64 s，玩家全力跑也就挪 3.2 m —— 刚好够甩掉一半）。
+@export var projectile_count: int = 1
+## 连发的节拍间隔（秒）。第 i 发（0 起）在判定段开始后 i × 本值 射出。
+## ⚠ 判定段的真实长度由 strike_window() 兜底 = max(strike_time, 末发时刻 + 0.05)，
+##   所以 strike_time 配小了不会"只吐两发就进后摇"。
+@export var projectile_interval: float = 0.16
 
 @export_group("表现")
 ## 前摇期间能不能移动（0 = 定身，1 = 全速追）。定身＝给玩家跑的机会。
@@ -142,6 +158,10 @@ static func make(data: Dictionary) -> BossSandwormAttack:
 		data.get("projectile_hit_radius", attack.projectile_hit_radius))
 	attack.projectile_max_distance = float(
 		data.get("projectile_max_distance", attack.projectile_max_distance))
+	attack.projectile_count = int(
+		data.get("projectile_count", attack.projectile_count))
+	attack.projectile_interval = float(
+		data.get("projectile_interval", attack.projectile_interval))
 	return attack
 
 # ============================================
@@ -161,6 +181,17 @@ func marker_radius() -> float:
 	if zone_radius > 0.0:
 		return zone_radius
 	return radius
+
+
+## 地面预警片的颜色。
+##   · 区域招（③流沙）→ 用 zone_color（它本来就是为地面圈配的）；
+##   · **面前扇形**（①撕咬）→ 用前摇警示色压到半透明 —— 与"前摇体色变红"**同源**：
+##     玩家看到的红体和红扇形是同一个信号，不会互相打架。
+##   （2026-09-26 用户反馈"撕咬释放时不够明显"：光变体色不够，得让玩家看见**哪块地危险**。）
+func marker_color() -> Color:
+	if zone_radius > 0.0:
+		return zone_color
+	return Color(telegraph_color.r, telegraph_color.g, telegraph_color.b, 0.5)
 
 
 ## 有没有"圆形流沙区域"（会把圈内单位持续拉向圆心）
@@ -190,6 +221,32 @@ func projectile_range() -> float:
 	return max_range
 
 
+## 判定段要"结算"几次：
+##   · 非弹道招恒为 1（就是"就地判一次"，撕咬 / 流沙）；
+##   · 弹道招 = 连吐发数（吐沙 4）。
+func shot_count() -> int:
+	if not has_projectile():
+		return 1
+	return maxi(1, projectile_count)
+
+
+## 第 index 发（0 起）在判定段开始后第几秒射出。
+func shot_delay(index: int) -> float:
+	return float(index) * maxf(projectile_interval, 0.0)
+
+
+## 判定段**实际**要持续多久：
+##   · 单发招 = strike_time（原语义不变）；
+##   · 连发招 = max(strike_time, 末发时刻 + 0.05 的尾巴)
+##     ⇒ 即使 strike_time 配小了，也不会"连发只吐了 2 发就进后摇"。
+## 基类用它判"何时离开判定段"，strike_time 因此只是连发窗口的**下限**。
+func strike_window() -> float:
+	var shots: int = shot_count()
+	if shots <= 1 or projectile_interval <= 0.0:
+		return strike_time
+	return maxf(strike_time, shot_delay(shots - 1) + 0.05)
+
+
 ## 判定圆心该怎么算。**真正的落点要在施放那一刻取一次然后记住** ——
 ## 区域招的圆心是钉死的，玩家跑出去就等于躲开了（这就是"可躲"的实现方式）。
 ## ⚠ 别每帧重算：那样圈会跟着玩家跑，变成必中。
@@ -209,6 +266,8 @@ func describe() -> String:
 		line += " 扇形%.0f°" % arc_degrees
 	if has_projectile():
 		line += " 弹道%.0fm/s(命中半径%.1f)" % [projectile_speed, projectile_hit_radius]
+		if shot_count() > 1:
+			line += " ×%d连发(间隔%.2fs)" % [shot_count(), projectile_interval]
 	if has_zone():
 		line += " 区域%.1fm(拉%.1f)" % [zone_radius, zone_pull_speed]
 	if not surfaces_in_telegraph:

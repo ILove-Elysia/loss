@@ -10,7 +10,7 @@
 #   3 × 900 行，而且表达不了 Boss 真正需要的几件事（前摇可躲、濒死保命、
 #   脱战可重复、世界推进）。
 #
-# 五条钉死的规则（改动前先读 主线设计规格.md 1.2）：
+# 六条钉死的规则（改动前先读 主线设计规格.md 1.2）：
 #   1. **没有 dead 状态**。Boss 的终点是 GONE（退场），不是"死亡 + queue_free"。
 #      所以本文件里不会有 _die()，也不会有 queue_free()。
 #   2. **RETREAT 与 FALLEN 是两件事**。RETREAT = 玩家跑了，可重复、回满血、
@@ -24,9 +24,15 @@
 #      三者共用一个判据，就不会出现"看着在地上却打不到"这种自相矛盾。
 #   5. **判定形状有三种**（字段都在 BossSandwormAttack）：就地圆形 / 面前扇形
 #      （arc_degrees，基准是 **_facing 逻辑朝向**）/ 弹道（projectile_speed，
-#      发射出去之后命中与扣血都归 boss_sandworm_spit.gd 管）。
+#      发射出去之后命中与扣血都归 boss_sandworm_spit.gd 管；
+#      projectile_count > 1 就是**连吐**，判定段按节拍射满这么多发）。
 #      ⚠ 扇形与弹道的朝向一律**不许读 Visual** —— Visual 是表现层，
 #        接正式美术时会换成 SpriteFacing，判定不能跟着一起改。
+#   6. **前摇必须有"看得见的信号"**（2026-09-26 用户反馈"撕咬释放时不够明显"）：
+#      · 地面预警片 ZoneFx（**top_level**，钉在世界坐标上）：区域招画圆、扇形招画扇形，
+#        形状与朝向都和判定同源（见 _apply_marker_shape / _marker_yaw）——
+#        玩家要一眼看懂"**哪块地**危险"，而不只是"它要出手了"；
+#      · 前摇体色**脉动**而不是静态变红（见 _refresh_body_color）。
 #
 # 与现有系统的边界：
 #   - **不进 "enemy" 组**，用 "boss" 组：
@@ -122,6 +128,10 @@ signal boss_gone(boss_id: StringName)
 ## 下颚比体色暗多少（0~1）。暗一档才一眼看得出头朝哪边
 @export var jaw_darken: float = 0.32
 @export var hurt_flash_time: float = 0.12
+## 前摇期间体色**脉动**的频率（Hz）。0 ⇒ 不脉动（只静态变色）。
+## 2026-09-26 用户反馈"撕咬释放时不够明显、难以察觉" —— 静态变色在余光里抓不住注意力，
+## 改成明暗跳动；再配合地面上的**扇形预警片**（见 _show_zone）就不容易看漏了。
+@export var telegraph_pulse_hz: float = 3.2
 
 @export_group("调试")
 @export var debug_enabled: bool = false
@@ -140,7 +150,11 @@ var _leash_timer: float = 0.0
 var _move_dir: Vector3 = Vector3.ZERO
 var _attack: BossSandwormAttack = null
 var _attack_index: int = -1
-var _strike_done: bool = false
+## 判定段已经"结算"过几次 / 这一招一共要结算几次。
+## 非弹道招的 total 恒为 1（就是"就地判一次"，语义等同老版的 _strike_done）；
+## 弹道招会是 projectile_count（吐沙 4 连发）—— 每发都在自己的节拍点上射出去。
+var _shots_fired: int = 0
+var _shot_total: int = 1
 ## 本招的判定圆心。aims_at_player 的招在**施放那一刻**取一次玩家位置并记住
 ## （每帧重算的话圈会跟着玩家跑，变成必中）；其余招只在判定时读当前位置。
 var _strike_origin: Vector3 = Vector3.ZERO
@@ -167,10 +181,17 @@ var _jaw_material: StandardMaterial3D = null
 var _hurt_flash: float = 0.0
 var _debug_timer: float = 0.0
 var _gone_emitted: bool = false
-## 地面预警圈（流沙 / 吐沙落点）。**top_level = true** 挂在世界坐标上，
-## 不跟着沙虫走 —— 否则圈会追着玩家跑，等于取消了"跑出去就能躲"。
+## 地面预警片。**top_level = true** 挂在世界坐标上，不跟着沙虫走 ——
+## 否则圈会追着玩家跑，等于取消了"跑出去就能躲"。
+## 两个形状共用这一套（2026-09-26 起）：
+##   · 圆形区域招（③流沙）→ 圆盘（CylinderMesh，改半径即可）；
+##   · **面前扇形**（①撕咬）→ 手工拼的平面扇形（ArrayMesh，见 _build_arc_mesh）。
 var _zone_fx: Node3D = null
-var _zone_mesh: CylinderMesh = null
+var _zone_disc: MeshInstance3D = null
+var _zone_disc_mesh: CylinderMesh = null
+## 扇形网格按 (半径, 张角) 缓存 —— 同一招反复出时不必每帧重建，改表尺寸变了才重建
+var _zone_arc_mesh: ArrayMesh = null
+var _zone_arc_size: Vector2 = Vector2.ZERO
 var _zone_mat: StandardMaterial3D = null
 
 # ============================================
@@ -240,6 +261,10 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 
 	_update_visual(delta)
+	# 前摇的体色**脉动**必须逐帧刷：_refresh_body_color 平时只在状态切换 / 受击结束时调一次，
+	# 那样只能做出"静态变色"。2026-09-26 用户反馈"撕咬释放时不够明显" ⇒ 加了这一行。
+	if _state == BossSandwormState.State.TELEGRAPH:
+		_refresh_body_color()
 	_tick_debug(delta)
 
 
@@ -373,21 +398,26 @@ func _process_attack(delta: float) -> void:
 			# 同时把地面圈画出来。玩家要在这段时间里逆着拉力走出去才能躲开。
 			if _attack.has_zone():
 				_pull_into_zone(delta, _attack)
-			if _attack.aims_at_player or _attack.has_zone():
+			if _attack.aims_at_player or _attack.has_zone() or _attack.is_sector():
 				_update_zone_fx(_attack)
 			if _state_time >= _attack.telegraph_time:
 				_enter_strike()
 		BossSandwormState.State.STRIKE:
-			# 判定只做一次（不是每帧扣血）
-			if not _strike_done:
-				_strike_done = true
+			# 判定：**非弹道招只做一次**；连发弹道招（吐沙）按节拍吐满 shot_count() 发。
+			# 用 while 而不是 if：一帧里可能跨过多个节拍点（掉帧时），
+			# 少吐一发就等于把配好的手感偷偷改掉了。
+			while (_shots_fired < _shot_total
+					and _state_time >= _attack.shot_delay(_shots_fired)):
+				_shots_fired += 1
 				_apply_attack_damage()
 				# ⚠ 上面这一行**可能同步把状态机推走**（详见 _apply_attack_damage 的说明：
 				#   那一击把玩家打死 ⇒ RETREAT ⇒ _attack 被置 null）。回头确认再往下读，
-				#   否则下一行的 _attack.strike_time 又是空引用。
+				#   否则下一轮 while 的条件里 _attack.shot_delay 又是空引用。
 				if _attack == null:
 					return
-			if _state_time >= _attack.strike_time:
+			# 判定段的真实长度走 strike_window()：连发招要吐完最后一发再留点尾巴，
+			# strike_time 对它们只是**下限**（见 BossSandwormAttack.strike_window）
+			if _state_time >= _attack.strike_window():
 				_set_state(BossSandwormState.State.RECOVER)
 		BossSandwormState.State.RECOVER:
 			if _state_time >= _attack.recover_time:
@@ -558,12 +588,16 @@ func _current_table() -> Array[BossSandwormAttack]:
 
 func _start_attack(attack: BossSandwormAttack) -> void:
 	_attack = attack
-	_strike_done = false
+	_shots_fired = 0
+	_shot_total = attack.shot_count()
 	# 落点必须在**施放这一刻**算一次然后钉住（见 _strike_origin 的说明）
 	_strike_origin = attack.strike_origin_from(global_position, player_position())
 	attack_started.emit(attack.attack_id)
 	_debug("选招 %s（%s）" % [attack.attack_id, attack.describe()])
-	if attack.aims_at_player or attack.has_zone():
+	# 地面预警片：区域招画圈（流沙）、**扇形招画扇形**（撕咬的"嘴前面这块地"）。
+	# 撕咬那一片是 2026-09-26 用户反馈"不够明显、难以察觉"补的 ——
+	# 光有"体色变红"玩家不知道该往哪躲，画出来才一眼看懂。
+	if attack.aims_at_player or attack.has_zone() or attack.is_sector():
 		_show_zone(attack, _strike_origin)
 	_set_state(BossSandwormState.State.TELEGRAPH)
 
@@ -998,29 +1032,37 @@ func _pull_into_zone(delta: float, attack: BossSandwormAttack) -> void:
 			position.z + dz / distance * step)
 
 
-## 懒创建预警圈：只建一次、靠 visible 开关复用，
+## 懒创建地面预警片：只建一次、靠 visible 开关复用，
 ## 免得每次出招都新建一个网格 + 新建一份材质。
+##
+## 两个形状共用这一套（2026-09-26 扩写）：
+##   · 圆形区域招（③流沙）→ 圆盘，圈内单位被持续拖向圆心；
+##   · **面前扇形**（①撕咬）→ 一块扇形，告诉玩家"嘴前面这块地会挨咬"。
+## 扇形是 2026-09-26 用户反馈"撕咬释放时不够明显、难以察觉"补的表现：
+##   光靠体色变红只能让人知道"它要出手了"，**不知道该往哪躲** —— 画出来才看得懂。
 func _ensure_zone_fx() -> void:
 	if _zone_fx != null and is_instance_valid(_zone_fx):
 		return
-	_zone_mesh = CylinderMesh.new()
-	_zone_mesh.height = 0.06
-	_zone_mesh.radial_segments = 48
+	_zone_disc_mesh = CylinderMesh.new()
+	_zone_disc_mesh.height = 0.06
+	_zone_disc_mesh.radial_segments = 48
 	_zone_mat = StandardMaterial3D.new()
 	# 与其它占位网格一致走 UNSHADED：受光材质在本工程的环境光下会被抬亮约 2.2 倍
 	_zone_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_zone_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	var disc: MeshInstance3D = MeshInstance3D.new()
-	disc.name = "Disc"
-	disc.mesh = _zone_mesh
-	disc.material_override = _zone_mat
-	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# 扇形是一张**单面**的平面片：从上往下看可能是背面 ⇒ 关掉背面剔除，免得时隐时现
+	_zone_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_zone_disc = MeshInstance3D.new()
+	_zone_disc.name = "Marker"
+	_zone_disc.mesh = _zone_disc_mesh
+	_zone_disc.material_override = _zone_mat
+	_zone_disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var root: Node3D = Node3D.new()
 	root.name = "ZoneFx"
 	# top_level ⇒ 它钉在世界坐标上，沙虫一边追一边走时圈不跟着跑
 	root.top_level = true
 	root.visible = false
-	root.add_child(disc)
+	root.add_child(_zone_disc)
 	add_child(root)
 	_zone_fx = root
 
@@ -1032,26 +1074,78 @@ func _show_zone(attack: BossSandwormAttack, center: Vector3) -> void:
 	_ensure_zone_fx()
 	if _zone_fx == null:
 		return
-	_zone_mesh.top_radius = radius
-	_zone_mesh.bottom_radius = radius
-	_zone_mat.albedo_color = attack.zone_color
-	# top_level ⇒ position 就是世界坐标
+	_zone_mat.albedo_color = attack.marker_color()
+	_apply_marker_shape(attack, radius)
+	# top_level ⇒ position / rotation 都是世界坐标
 	_zone_fx.position = Vector3(center.x, center.y + 0.06, center.z)
+	_zone_fx.rotation = Vector3(0.0, _marker_yaw(attack), 0.0)
 	_zone_fx.visible = true
 
 
-## 越接近爆发越暗、越不透明 —— 给玩家一个"还剩多久"的读数
+## 预警片的形状：圆形区域招用圆盘（复用同一个 CylinderMesh，只改半径）；
+## 扇形招用一块手工拼的平面扇形。扇形网格按 (半径, 张角) 缓存 ——
+## 同一招反复出时不用每帧重建，改了招式表尺寸才会重建。
+func _apply_marker_shape(attack: BossSandwormAttack, radius: float) -> void:
+	if _zone_disc == null:
+		return
+	if not attack.is_sector():
+		_zone_disc.mesh = _zone_disc_mesh
+		_zone_disc_mesh.top_radius = radius
+		_zone_disc_mesh.bottom_radius = radius
+		return
+	var size: Vector2 = Vector2(radius, attack.arc_degrees)
+	if _zone_arc_mesh == null or _zone_arc_size != size:
+		_zone_arc_mesh = _build_arc_mesh(radius, attack.arc_degrees)
+		_zone_arc_size = size
+	_zone_disc.mesh = _zone_arc_mesh
+
+
+## 预警片的 yaw。**扇形必须跟着逻辑朝向 `_facing` 转** —— 它和判定用的是同一个朝向，
+## 否则会出现"预警片朝东、判定朝西"这种自相矛盾（与文件头第 4 条铁律同一个口径）。
+## 圆盘没有方向，恒为 0。
+##
+## ⚠ 定身招（撕咬）在前摇里不转向 ⇒ 这里读到的 _facing 是"决定咬你的那一刻"的朝向，
+##   和判定完全一致；将来若给撕咬加了 move_scale，_update_zone_fx 会每帧把它转过来。
+func _marker_yaw(attack: BossSandwormAttack) -> float:
+	if not attack.is_sector():
+		return 0.0
+	return atan2(_facing.x, _facing.z)
+
+
+## 手工拼一块**水平扇形平面**：以原点为中心、朝局部 +Z 张开 arc_degrees（左右各一半）。
+##   · 三角扇（圆心 + 圆弧采样点），采样步长约 10°、最少 6 段 ⇒ 120° 就是 12 段；
+##   · 不给法线：材质是 UNSHADED + 双面，用不到；
+##   · 不给厚度：它就是贴在地上的一层色块（与流沙圆盘挂在同一个高度）。
+static func _build_arc_mesh(radius: float, arc_degrees: float) -> ArrayMesh:
+	var surface: SurfaceTool = SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var segments: int = maxi(6, int(ceil(arc_degrees / 10.0)))
+	var start: float = -arc_degrees * 0.5
+	var step: float = arc_degrees / float(segments)
+	for i in range(segments):
+		var a0: float = deg_to_rad(start + step * float(i))
+		var a1: float = deg_to_rad(start + step * float(i + 1))
+		surface.add_vertex(Vector3.ZERO)
+		surface.add_vertex(Vector3(sin(a0) * radius, 0.0, cos(a0) * radius))
+		surface.add_vertex(Vector3(sin(a1) * radius, 0.0, cos(a1) * radius))
+	return surface.commit()
+
+
+## 越接近爆发越暗、越不透明 —— 给玩家一个"还剩多久"的读数。
+## 扇形还要每帧跟着逻辑朝向转（定身招不会变，但配了 move_scale 就会）。
 func _update_zone_fx(attack: BossSandwormAttack) -> void:
 	if _zone_fx == null or not _zone_fx.visible:
 		return
 	var progress: float = 0.0
 	if attack.telegraph_time > 0.0:
 		progress = clampf(_state_time / attack.telegraph_time, 0.0, 1.0)
-	var base: Color = attack.zone_color
+	var base: Color = attack.marker_color()
 	var dim: float = 1.0 - 0.45 * progress
 	_zone_mat.albedo_color = Color(
 		base.r * dim, base.g * dim, base.b * dim,
 		clampf(base.a + 0.35 * progress, 0.0, 1.0))
+	if attack.is_sector():
+		_zone_fx.rotation.y = _marker_yaw(attack)
 
 
 func _hide_zone() -> void:
@@ -1111,9 +1205,15 @@ func _refresh_body_color() -> void:
 	elif _state == BossSandwormState.State.FALLEN or _state == BossSandwormState.State.GONE:
 		color = fallen_color
 	elif _state == BossSandwormState.State.TELEGRAPH and _attack != null:
-		# 前摇的视觉信号：体色变红 = "要打了，快跑"
-		# 正式美术接入后这一段由动画承担（BossSandwormAttack.telegraph_color 只是占位）
-		color = _attack.telegraph_color
+		# 前摇的视觉信号：体色在"警示色 ↔ 压暗后的警示色"之间**脉动**，
+		# 而不是静态变红 —— 2026-09-26 用户反馈"撕咬释放时不够明显、难以察觉"。
+		# ⚠ 在**警示色内部**跳，不要跳回本色：跳回本色时会有半个周期看起来"没在警戒"。
+		# 正式美术接入后这一段由动画承担（BossSandwormAttack.telegraph_color 只是占位）。
+		var pulse: float = 0.5
+		if telegraph_pulse_hz > 0.0:
+			pulse = 0.5 + 0.5 * sin(_state_time * telegraph_pulse_hz * TAU)
+		color = _attack.telegraph_color.darkened(0.35).lerp(
+			_attack.telegraph_color, pulse)
 	_body_material.albedo_color = color
 	if _jaw_material != null:
 		# 下颚跟着一起变，但保持"比体色暗一档"的关系
