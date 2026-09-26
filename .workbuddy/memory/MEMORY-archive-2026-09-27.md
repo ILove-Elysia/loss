@@ -1,0 +1,54 @@
+# 项目长期记忆（loss-land）
+
+> **本文件＝高频铁律 + 领域指针（每轮自动注入，务必保持精简；超过 ~4.8 K 字符就会被截断）**。细节、历史决策、踩坑过程在 **`MEMORY-archive.md`**（2026-09-26 由 18 份旧记忆合并的全量归档：细节详章 / 拆分前备份 / 09-08～09-26 每日日志，见其 `## 目录` S01～S18；**它是冻结快照，别往里追加**，新细节写进本文或项目文档）。**待办在 `E:\GameMake\loss\待办.md`**。
+
+## 一、改文件 / 改数据的铁律
+- **改 `大纲.md` 只做用户明确点名的改动**（09-25 / 09-26 两次明确要求）：可以标注想法，但不能动他的内容；删的只能是我臆造的东西。删/加物品时**连带问题（解锁门槛、计数、跨章节引用）先在回复里以「建议」列出、等拍板**，不许顺手改。**新增系统＝标题 + 定位一句话 + 「待完善」问题清单（一律写"待定"，不给候选方案）**，绝不写死具体设定。想法一律只放进回复。`大纲.md` 自身：禁版本号/状态标记/代码名/字段名/待办/踩坑；未实装标「（规划中）」；改数值后回写。
+- **改 .gd → `test/gd_static_lint.py`；改 .tres/.tscn → `test/check_data_refs.py`；最后实机。编辑器开着别跑 headless**（抢 `.godot`）。**跑 headless 前的标准动作＝先 `tasklist | grep -i godot` 确认编辑器没开 ⇒ 直接在主工程跑**（`bash: "$GODOT" --headless --path . --script res://test/X.gd > log 2>&1; echo exit=$?`，一次拿到完整输出＋退出码；**比复制副本快得多、没有 APPDATA 路径坑**，副本只留给"编辑器开着也要验"或"模拟全新导入"两种场景）。Godot 4.7.2＝`E:\SteamLibrary\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe`；headless＝`godot --headless --path . --script res://test/<name>.gd`（仓库根＝`E:\GameMake\loss`，工程在 `loss-land`）；**`--path` 只认 Windows 路径**。**编辑器开着也想 headless 验证：复制工程（⚠ `tar` 排除 `.godot` 时要**连工程内的 `Godot/` 一起排除** —— 那是 `user://` 日志目录，否则会读到上一轮的旧 `godot.log` 误当本次结果）→ ⚠ 副本必须先 `--editor --quit` 生成 `.godot` 再跑 `--script`**（脚本模式不扫项目 ⇒ 缺缓存时**所有** `class_name` 报 not declared，极易误判成"改动把类改坏了"）。**验证一律用 Bash 跑**（会等待子进程，`… > out.txt 2>&1; echo exit=$?` 一次拿全输出与退出码；PowerShell 对 GUI 子系统的 Godot **不等待** ⇒ 命令"完成"实则没跑完、输出被截断、后续语句还可能整段不执行）；**`APPDATA` 必须写 Windows 格式** `C:/…`（写成 `/c/…` ⇒ Godot 报 `Could not create directory: '/c'`、建不出 `user://`、日志根本不落盘）。
+- **lint 查不出「调用了未定义的方法」**（09-24 `_connect_player_signals` 事故）：`Function "X" not found in base self` 只在真跑时才炸。**改完 .gd 必跑一次会加载它的 headless 入口。**
+- **改 `.gd` 的 `@export`（尤其删字段）必须先关编辑器**：编辑器用中间态脚本重序列化 .tres、无声吞字段（09-22：8 份 .tres 的 `resource_id` 被吞）。铁证＝被编辑器存过的 .tres 多出 `uid=`。**脚本改好 ≠ 数据还在，改完必跑 check_data_refs；它报的每条都要处理。**
+- **移出 .tscn/.tres 前先在编辑器关掉它的标签页**（否则编辑器把内存场景重新落盘，已 3 次）；标签页状态在 `.godot/editor/editor_layout.cfg` ⇒ 必须「关标签页 + 重启」。同理：**标签页开着时外部改 .tscn 会被覆盖** ⇒ 关键值改由运行时脚本强制（如 `sandworm_arena._ensure_unshaded_materials()`）。
+- **手工写 `.tscn`：`@export` 节点引用必须在节点头写 `node_paths=PackedStringArray("属性名")`**，漏写则**静默 null 且不报错**（tree.tscn 的 `Visual` 事故）。最稳＝编辑器拖拽生成。
+- **删物品 / 移动 .gd 各需同步 5 处** → 归档 S02「文件同步清单」。**新增 `class_name` 要手工补 `.godot/global_script_class_cache.cfg`（lint 第 4 项查），或用 `const X := preload("res://…")` 绕开缓存**。核心系统＝`class_name`+`static`，不用 autoload。
+- 同文件多处 Edit **必须串行**（并行会静默丢更新）；改完 grep 复核；批量脚本改文件先 `cp` 后 `diff`；弱特征定位会命中错处 → 特征须含唯一内容。误改可救：`~/.workbuddy/file-history/<会话uuid>/<hash>@vN`。
+- 查属性/枚举名 → `raw.githubusercontent.com/godotengine/godot/4.7/doc/classes/<类>.xml`。写错属性名 → `_ready` 抛错 → 灰屏，lint 查不出。
+
+## 二、GDScript 语言坑
+- **`:=` 右侧为 Variant 会报错**（WARNING 当 ERROR）：`.get()`/`.call()`/无返回类型函数/双签名数学函数；新函数必写返回类型。**4.x 只有 11 个函数有 `f` 变体**＝`absf/ceilf/clampf/floorf/lerpf/maxf/minf/roundf/signf/snappedf/wrapf`；`sin/cos/tan/atan/atan2/sqrt/pow/exp/log/deg2rad/rad2deg` **没有** `sinf/asinf/sqrtf/powf`，写了整份脚本解析失败（lint 第 7 项查）。
+- 信号 arity 是**运行时**检查：改 `signal` 参数后回调不匹配**不报错**，真触发才炸。常驻 `test/signal_arity_check.py`（它现在**也管带 `bind()` 的 connect**）。
+- **`.bind()` 的参数是接在信号参数【后面】**：`signal s(a)` + `s.connect(f.bind(b, c))` ⇒ `f` 要收 **3** 个 `(a, b, c)`。按"bind 在前"写 ⇒ 运行时 `Method expected 2 argument(s), but called with 3`（09-26 沙虫沙弹）。**能靠"数据自带身份"就别用 bind 补参数**（让发射物自己带 `attack_id`，`connect` 不 bind，两边签名一眼对上）。
+- **`await physics_frame` 是在 `_physics_process` 【之前】恢复的**：测试里"检测到某状态的当帧就动手"，其实发生在节点处理**之前**。想确认"这一帧节点已经做过某事"，要**多放一帧**再断言（09-26：以为沙弹已出膛、其实还没发射）。
+- **同一函数作用域不许重名 `var`**（`_run_cases()` 这种巨型测试函数尤其）：报 `There is already a variable named "X" declared in this scope` ⇒ **整份脚本解析失败、测试全灭**（不是只失败一条）。
+- **辅助 / 工具函数别用引擎虚函数名**（`_set`/`_get`…）：直接 `Parse Error` 加载失败；若发生在 `SceneTree._initialize()` 里，`quit()` 也会走不到、进程挂着不退。
+- **「每帧强制对齐状态」的函数会吃掉外来一次性动画**：`physics._update_animation()` 每帧 `else: spr.play("idle")` ⇒ 一次性动画须有独占标志位（见 `is_working`）。
+- **「同步重入」：发信号 / 调别人方法时，对方会在你返回之前改你的状态**。典型＝`body.take_damage()` 把玩家打死 ⇒ 玩家**同步**发 `died` ⇒ 我方 `_set_state(RETREAT)` 顺手把当前招置 null ⇒ 回到原函数继续读它＝空引用（09-26 沙虫：一次死亡连报两条 `Invalid access … on Nil`，日志里只看得见第一条）。**规矩：进函数先取局部快照，扣血 / 发信号之后只用局部量；调用方在该调用之后必须重新确认状态**（`if _attack == null: return` + `is_attack_phase(_state)` 守门）。凡"我会改别人 / 别人会改我"的调用都按这条办。
+
+## 三、运行时取证与排查
+- 日志 `%APPDATA%\Godot\app_userdata\loss_land\logs\`（`godot.log` 当次 + 历史时间戳）；同目录 `debug_config.cfg` 分类开关（**默认 resource=false**）。存档 `saves/slot_N.json` 可 Python 直读。
+- **高频根因（先查这 6 个）**：绑定缺失 / 缓存未重扫 / 集合被清空 / queue_free 延迟 / 控件 0×0 / 先设位置后入树。
+- **报一串 `Could not parse global class "X"` 先 `git status`/`git diff`，别怀疑类缓存**（09-25：`boss_base.gd` 被误敲进一个 `1` ⇒ 所有 `extends`/`: BossBase` 连坐 33 条）。**编辑器脚本自动保存（默认 10 s）会把误击键静默落盘**，「我没改过」不成立；`git diff` 为空＝与已验证版本逐字节一致。
+- **"颜色不对 / 看不清 / 变白"要出图取证**：headless 渲染不出画面 ⇒ 隔离副本里开窗口跑 `--script <截图脚本> --quit-after N`，**并把取样像素打进日志**（比肉眼看图更硬）。⚠ `_initialize()` 里报一次错就永远走不到 `quit()`、进程挂着不退 ⇒ 必须 `--quit-after` 兜底。完整做法见 `项目结构说明.md §4.9`。
+- 运行时 `new` 的控件**禁用 `set_anchors_preset`**（0×0 悬停不到且点击穿透到 3D）→ 显式 size/position；居中用 CenterContainer；autowrap Label 给确定正宽度；F5 内嵌运行不可用 → 独立窗口。
+- 工具链顺序：`fix_import_paths.py` → `check_data_refs.py` → `find_orphans.py`（**孤岛 ≠ 可删**）→ `gd_static_lint.py`（**动了 `signal`/`connect` 再加跑 `signal_arity_check.py`**）→ 实机。二进制 `.res` 内字符串 grep 不到且带长度前缀 ⇒ 改路径长度会损坏，只能编辑器拖拽更新；**引用者自身可能是死的**；绝不 `cat` 大 .tres。
+- **判断"某物品是否可得"的唯一权威＝`script/crafting/crafting_system.gd` 配方表 + 掉落/初始背包**，不是 `items/data/*.tres`（遗留 .tres 会长期挂 registry 还被测试当夹具）。**加档位/写说明书前先查配方表**。
+- **调试接口不要被玩法规则门禁**：`debug_*()` 与正式入口拆到**共用核心函数**上，调试路径**故意绕过**新加的游戏规则（2026-09-26：`debug_damage_to()` 绕过 Boss 受击窗口，否则"摆血量"变成看 Boss 脸色的运气活、测试随机挂）。测试要断言新规则时，**直接读它改的那个状态量**（如 `collision_layer`）当判据，**不为内部机制另开测试接口**。
+- **写"两个值应当相等"的断言前，先看它们会不会退化成同一个常量**（2026-09-26：Boss 测试里假玩家固定在正 +Z ⇒ 朝向 yaw 恒为 0 ⇒ "预警片朝向 = 逻辑朝向"退化成 `0.000 vs 0.000`，**实现根本不跟着转也照样通过**；摆到偏斜方位才真的在测）。**测试的输入也要"非平凡"，否则断言只是在测常量。**
+## 四、位置与距离（重灾区）
+- **算「玩家到某物」距离必须取 `Physics` 子节点（或 `ViewFrustum.player_position()`），绝不读 `player` 根节点**：根节点从不位移、永停出生点，动的是 `Physics`(CharacterBody3D)。09-22 采集中断读根节点 ⇒ 判定恒≈59 m ⇒ 全资源采不动。ClickMover 的 `get_parent()` 就是根节点。
+
+## 五、领域高频点（一句话触发；数值与细节 → 归档 S02）
+- **渲染 / 材质**：**全工程 3D 网格一律 `SHADING_MODE_UNSHADED`**（地形/海面见 `map_generator_3d.gd`）。环境光＝`ambient_light_color(0.83) × energy(9.0)`（map.tscn）⇒ 受光面抬亮 ≈2.2 倍、**albedo 亮过 0.45 直接变纯白**（09-26 沙虫"变白看不清"，实测体色/地面像素都 `#ffffff`）。占位件别漏 `material_override`（漏了＝引擎默认的白色受光材质）；体色要比地形瓦片色**暗一档**。细则见 `项目结构说明.md §4.9`。
+- **UI**：右列/底部控件必须 `anchor_*=1.0` + 负 offset（`ui_scale` >1 会缩小逻辑视口、把写死坐标裁出屏）；改布局必跑 `ui_grid_layout_check.py` + `ui_grid_layout_test.gd`。设计视口恒 1280×720。
+- **碰撞层**：只有 layer_1＝玩家、layer_2＝地面/障碍有名；**障碍物一律 layer2 + mask0**；玩家碰撞体仅 1.0 m 高 ⇒ 平行地面的投射物/射线飞 y ≤ 1.2；鼠标点地走**解析求交**、加碰撞体不影响寻路。
+- **朝向**：一律 `script/visual/sprite_facing.gd`、`billboard` 全关；`facing_basis` 只覆盖 Visual 的 basis。`flip_h` 符号**随实体自带镜像次数而异、不能互抄**；yaw 必须落在 `rotate_step_degrees`(45°) 整数倍。
+- **容器**：数据层唯一入口＝`Inventory` 静态方法；四块信息面板可同刻全开（`LAYOUT_PANELS`）；修饰键点击须**延后到"松开且未拖拽"**再判定。
+- **采集**：工作量 ÷ 工具每击伤害＝要采几下，中断**进度保留**（存 `work_remaining`）；工具门槛留空＝空手可采；在役工具 4 把；作业动画＝SpriteFrames 的 **`harvest`**。
+- **资源实体**：8 种只有 tree 有专用预制体，其余走 `tscn/resource_entity.tscn`；**兜底判据＝「sprite 是否带 SpriteFrames」**；卸载/挂起一律**复用节点**，绝不 queue_free。
+- **Boss / 沙虫**：独立 `"boss"` 组、**绝不进 `"enemy"` 组**；永久世界状态只走 `WorldState`；状态机**没有 `dead`、终态 `GONE`**；换表**只在决策点**；技能全 CD 时**回 CHASE**；**领地/脱战判据＝玩家↔巢穴**（`player_home_distance()`，别与 `player_distance()` 混），追击/出招受**领地绳**约束、回家不受限。场地 `tscn/sandworm_test.tscn`（**F6 独立窗口**）＋回归 `test/boss_state_test.gd`（**96 断言**；13＝扣血同步重入、14＝受击窗口、15＝顺序轮转、16＝面前扇形 + 前摇预警片、17＝连吐 4 发的弹道、18＝面前长条矩形、19＝受击体 r≤0.85 + 12 m 外不放招）。**两个距离旋钮别搞混**：①**玩家够得着它 = 挥砍半径 2.0(physics.gd) + 受击体半径**（.tscn 的 CollisionShape3D，现 r0.8 ⇒ ≈2.8 m；不要去改招式表）；②**它从多远出手 = 招式表 `max_range`，且必须 ≤ 该招真正够得着的距离**（配大了就是"起手够得着、判定时人走了"的空放）；`_pick_next_attack` 遇"够不着"是 `return null` **不推指针** ⇒ **表头①的 max_range 就是"开始交锋的距离"**（现 ①②④ 5 m 内、③10 m）。受击体 `collision_layer=8` **不在玩家 mask(3) 里** ⇒ 只当受击体、不挡路，收小它无物理副作用。
+- **沙虫「受击窗口」＝只有露出地面那几段能被打**（2026-09-26）：判据**只有一处 `_is_surfaced()`**（TELEGRAPH 看 `attack.surfaces_in_telegraph`；STRIKE/RECOVER 恒真；其余恒假），它**同时**驱动碰撞层与占位美术埋深（`_visual_target_depth()`）⇒ 不会"看着在地上却打不到"。**切 `collision_layer`（8↔0）、绝不切 `collision_mask`**：玩家挥砍走 `physics.gd` 的 `intersect_shape`（mask 扫全部层），layer 归 0 就字面打不到；mask 保持 2 ⇒ 潜地照样站立、不坠落、不出现"看不见的墙"（同款先例 `resource_manager.gd` 隐藏建筑）。
+- **沙虫招式＝四种判定形状 + 连发**（2026-09-26 定）：就地圆形 / **面前扇形** `arc_degrees`（①撕咬 120°）/ **面前长条矩形** `rect_length`×`rect_width`（④突袭，生效后 `radius`/`arc_degrees` 都不参与）/ **弹道** `projectile_speed`（②吐沙）。形状基准是 **`_facing` 逻辑朝向**（`_face()` 前半段更新它、后半段才转 `Visual`），**定身招 `move_scale=0` ⇒ 前摇里不调 `_face()` ⇒ 朝向天然锁住 ⇒ 贴脸"绕到背后"能咬空**；反之给它 `move_scale>0` 就边走边转、扇形形同虚设。⚠⚠ **形状要"躲得掉"必须锁两样**：新字段 `facing_locked` 同时锁 `_facing` **和** `_move_dir` —— **只锁其一都不够**（只锁朝向 ⇒ 它照样**拐弯**追人；只锁方向 ⇒ 它照样扭头对准你），两个都锁住那一扑才是**直线**（第一版只锁朝向，用例 18 的"侧移躲开"当场变红）。
+- 🔴 **判断"目标在不在某个形状里"用「位移分量」而不是「归一化方向 + 点乘」**（2026-09-26）：矩形判定 `_in_attack_rect()` 把 `Boss→目标` 的位移直接投影到 `_facing`（沿向）与它的垂线（侧向），判 `0 ≤ 沿向 ≤ rect_length` 且 `|侧向| ≤ rect_width/2`。**原因是 `_horizontal_dir()` 在两点重合时有除零保护、返回 ZERO** ⇒ 点乘得 0 ⇒ 贴脸反而永远落在形状外。位移分解在重合时两个分量都是 0 ⇒ 算命中。**凡是"贴脸要算中"的形状判定，都别先归一化。**
+- **沙虫招式（续）**：**弹道见 `boss_sandworm_spit.gd`**：线段↔**平面**距离判命中（不隧穿、不"从头顶飞过"、**不碰物理查询** ⇒ 没 CollisionShape 的测试假玩家也能被打中）；目标本体由 Boss 传进去；**伤害落在三段之外**（"后摇不扣血"对它不成立，靠 `struck` 回传给 Boss 转报 `attack_landed`）。**连发**（`projectile_count>1`）＝判定段**按节拍多结算几次**（`_shots_fired`/`_shot_total`，非弹道招恒为 1），用 `while` 防掉帧漏发；**判定段真值长度走 `strike_window()`＝`max(strike_time, 末发时刻+0.05)`** ⇒ `strike_time` 对连发招只是**下限**，"配小了也不会少吐一发"（**"派生函数兜底、可配值只当下限"这个路子通用**）。连发是**逐发瞄发射瞬间的位置** ⇒ 站定全吃、持续换位才甩得掉。
+- **给玩家看的信号必须与判定"同源"**（2026-09-26 用户"撕咬不够明显"）：Boss 前摇的地面预警片**形状读 `is_rect()`/`is_sector()`/`arc_degrees`、朝向读 `_facing`**，颜色走 `marker_color()` ⇒ 它是"判定的可视化"、不是另写一套表现，**不可能出现"预警片朝东、判定朝西"**。⚠ **"钉死还是跟着走"同样必须与判定原点同源**：`aims_at_player`（落点钉在玩家，③流沙）⇒ 预警片**钉在施放那一刻的落点**（跟着跑＝永远罩着你、把"跑出圈"这条活路取消掉）；判定原点在它自己（①撕咬④突袭）⇒ **每帧跟到它当前的位置**（④在地下 8.5 m/s 冲刺时，预警片留在起手点就是废信息）。体色也改成**在警示色内部脉动**（跳回本色会有半个周期看着像没在警戒），且 `_physics_process` 在 TELEGRAPH 期**逐帧刷**才动得起来。**凡是"让玩家预判判定"的表现，都必须从判定字段派生。**
+- **沙虫出招＝顺序轮转**：`_rotation_index` 指针；**够不着 ⇒ 返回"无招"且不推指针**（"潜近再放"）；CD/太近 ⇒ 顺延；一圈没有 ⇒ 回 CHASE。**换表时指针归零**（表 2 才读得出 4123）。⚠ **`min_range > 0` 会让它死锁**（贴脸永远够不着、站着不动）⇒ 需要加时必同时补"太近就顺延"分支。
+- **沙虫流沙区域**：吸引**改 `global_position`、不塞 `velocity`**（玩家控制器每帧重算 velocity 会覆盖）；被拉对象走**组名遍历**（`player` 组解引用到 `Physics` 子节点＋`enemy` 组）而非物理查询（测试假玩家**没有 CollisionShape**）；区域招在判定段把 Boss **瞬移到圆心** ⇒ "离圆心"与"离 Boss"同一个数、复用 `radius` 判定。
