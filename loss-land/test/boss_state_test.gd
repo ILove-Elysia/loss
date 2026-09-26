@@ -5,6 +5,9 @@
 #   godot --headless --path . --script res://test/boss_state_test.gd
 #
 # 对应用例表：主线设计规格.md 1.10（#1~5）+ 2.9（#8~12）。
+# #13 是线上缺陷回归（2026-09-26「被沙虫打死后会报错」）：招式判定把玩家打死时，
+#     玩家 died 信号会**同步**把状态机推去 RETREAT、连带丢掉当前招，
+#     扣血函数回来后再读 _attack 就是空引用。规格里没有这一条，是修 bug 补的。
 #
 # 关键设计：
 #   · 直接实例化 Boss，不加载 map.tscn —— 那边一次地图生成要 12~20 秒；
@@ -24,6 +27,14 @@ var _failures: int = 0
 var _checks: int = 0
 var _boss: BossBase = null
 var _target: CharacterBody3D = null
+## 用例 13 用：数 attack_landed 发了几次。
+## 这一条是**功能性判据**，不是只看"有没有报错"——旧代码在重入处直接中断，
+## attack_landed 根本发不出来，所以这个计数能真正把回归钉死。
+var _landed_hits: int = 0
+
+
+func _on_attack_landed(_attack_id: StringName, _damage: int) -> void:
+	_landed_hits += 1
 
 
 func _initialize() -> void:
@@ -288,6 +299,58 @@ func _run_cases() -> void:
 	_check(home_again, "回巢后回到待机")
 	_check(_boss.get_health() == _boss.get_max_health(),
 		"玩家死亡这条路径同样**回满**血（%d → %d）" % [health_before_death, _boss.get_health()])
+	_target.revive()
+
+	print("[用例 13] 招式判定把玩家打死：状态机被同步重入也不报错")
+	# 复现 2026-09-26 线上报错（用户反馈「被沙虫打死后会报错」）：
+	#   SCRIPT ERROR: Invalid access to property or key 'attack_id' on a base
+	#   object of type 'Nil'.  at Sandworm._apply_attack_damage
+	# 链路：_apply_attack_damage 调 body.take_damage() ⇒ 玩家**同步**发 died 信号
+	#   ⇒ Boss._on_player_died ⇒ _start_retreat ⇒ _set_state(RETREAT)
+	#   ⇒ 按「离开招式三段就丢掉当前招」把 _attack 置 null，
+	#   而 _apply_attack_damage 还没执行完、后面仍要读 _attack.attack_id / .damage。
+	# ⚠ 用例 9 用的是**外部** _target.kill()：那条路径不经过招式判定，
+	#   所以它一直测不到这个重入。要复现必须让玩家**死在招式判定里**——
+	#   把血量压到 1，然后等沙虫的招自己打过来。
+	_place_target_at(3.0)
+	_boss.debug_wake()
+	_boss.debug_set_all_cooldowns(0.0)
+	var engaged_reentry: bool = await _wait_for_battle(10.0)
+	_check(engaged_reentry, "重新进入战斗")
+	_target.revive()
+	_target.current_health = 1
+	# 挂上信号计数：**被打死的那一击也必须照实上报 attack_landed**。
+	# 旧代码在 attack_landed.emit 之前就空引用中断了 ⇒ 这一击永远上报不了，
+	# 计数会停在 0 ⇒ 本用例变红（这比"日志里有没有 ERROR"更可靠）。
+	_boss.attack_landed.connect(_on_attack_landed)
+	_landed_hits = 0
+	var damage_before_hit: int = _target.damage_taken
+	var hit_landed: bool = false
+	var watch_frame: float = 1.0 / float(Engine.physics_ticks_per_second)
+	var watched_hit: float = 0.0
+	while watched_hit < 12.0:
+		await physics_frame
+		watched_hit += watch_frame
+		if _target.damage_taken > damage_before_hit:
+			hit_landed = true
+			break
+	_check(hit_landed, "招式判定命中玩家（累计伤害 %d → %d）"
+		% [damage_before_hit, _target.damage_taken])
+	_check(not _target.is_alive(), "玩家死在这一击里（take_damage 内同步发了 died）")
+	_check(_landed_hits >= 1,
+		"打死玩家的那一击同样上报了 attack_landed（%d 次）" % _landed_hits)
+	# 命中那一刻状态就被重入改走了 —— 这一行要是崩溃，就是本轮修的 bug 复发
+	var state_after_hit: int = _boss.get_state()
+	_check(state_after_hit == BossState.State.RETREAT
+			or state_after_hit == BossState.State.DORMANT,
+		"被同步重入后落在合法状态（当前 %s）" % BossState.label_of(state_after_hit))
+	_check(_boss.current_attack() == null,
+		"被打断的招式已丢弃（current_attack_id = '%s'）" % _boss.current_attack_id())
+	await _step(0.3)
+	var home_after_hit: bool = await _wait_for_state(BossState.State.DORMANT, 30.0)
+	_check(home_after_hit, "这一击之后照样回巢回待机（没有卡死在招式里）")
+	_check(_boss.get_health() == _boss.get_max_health(), "回巢回满血")
+	_boss.attack_landed.disconnect(_on_attack_landed)
 	_target.revive()
 
 	print("[用例 10] 招式表兜底：全表在 CD 时不空放、不卡死")

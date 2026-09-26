@@ -268,6 +268,11 @@ func _process_attack(delta: float) -> void:
 			_face(dir)
 			_move_dir = dir
 
+	# 上面几行（尤其 _check_leash）可能已经把状态推走 ⇒ 只有确实还在招式三段里，
+	# 下面读 _attack.xxx 才是安全的。这是"招式播到一半绝不换表/丢招"的守门员。
+	if not BossState.is_attack_phase(_state):
+		return
+
 	match _state:
 		BossState.State.TELEGRAPH:
 			if _state_time >= _attack.telegraph_time:
@@ -277,6 +282,11 @@ func _process_attack(delta: float) -> void:
 			if not _strike_done:
 				_strike_done = true
 				_apply_attack_damage()
+				# ⚠ 上面这一行**可能同步把状态机推走**（详见 _apply_attack_damage 的说明：
+				#   那一击把玩家打死 ⇒ RETREAT ⇒ _attack 被置 null）。回头确认再往下读，
+				#   否则下一行的 _attack.strike_time 又是空引用。
+				if _attack == null:
+					return
 			if _state_time >= _attack.strike_time:
 				_set_state(BossState.State.RECOVER)
 		BossState.State.RECOVER:
@@ -423,23 +433,36 @@ func _start_attack(attack: BossAttack) -> void:
 
 
 ## 判定生效：玩家在判定半径内才扣血。用玩家**本体**（player/Physics）算距离
+##
+## ⚠⚠ 本函数**会在执行途中被同步重入**，这是本文件最危险的一处：
+##      body.take_damage() 可能把玩家打死 ⇒ 玩家同步发 died 信号
+##      ⇒ _on_player_died() ⇒ _start_retreat() ⇒ _set_state(RETREAT)
+##      ⇒ 依 _set_state 的规则「离开招式三段就丢掉当前招」把 _attack 置 null。
+##      而此刻本函数**还没执行完**，后面还要用这一招的 id / damage。
+##    ⇒ 所以：**开头取一个局部引用 attack，全程只用它**，扣血之后绝不回头读 _attack。
+##      （2026-09-26 玩家反馈"被沙虫打死后会报错"就是这里：
+##       Invalid access to property or key 'attack_id' on a base object of type 'Nil'）
+##    ⚠ 同理，调用方（_process_attack）在调用本函数之后也必须重新确认 _attack 还在。
 func _apply_attack_damage() -> void:
-	if _attack == null:
+	var attack: BossAttack = _attack
+	if attack == null:
 		return
 	var body: Node3D = player_body()
 	if body == null or not player_alive():
-		_debug("招式 %s 落空（玩家不在场）" % _attack.attack_id)
+		_debug("招式 %s 落空（玩家不在场）" % attack.attack_id)
 		return
 	var distance: float = _horizontal_distance(global_position, body.global_position)
-	if distance > _attack.radius:
+	if distance > attack.radius:
 		_debug("招式 %s 落空（玩家 %.1f m 在 %.1f m 判定外）"
-			% [_attack.attack_id, distance, _attack.radius])
+			% [attack.attack_id, distance, attack.radius])
 		return
 	if not body.has_method("take_damage"):
 		return
-	body.call("take_damage", _attack.damage)
-	attack_landed.emit(_attack.attack_id, _attack.damage)
-	_debug("招式 %s 命中玩家，扣 %d" % [_attack.attack_id, _attack.damage])
+	# ↓↓↓ 这一行可能就是上面说的"重入点"（打死玩家 → 状态被改 → _attack 变 null）
+	body.call("take_damage", attack.damage)
+	# 继续用局部 attack：命中确实发生了，即使状态机已经被推去 RETREAT，也该照实上报
+	attack_landed.emit(attack.attack_id, attack.damage)
+	_debug("招式 %s 命中玩家，扣 %d" % [attack.attack_id, attack.damage])
 
 # ============================================
 # 受伤与濒死

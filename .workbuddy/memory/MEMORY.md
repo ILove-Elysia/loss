@@ -18,6 +18,7 @@
 - **`:=` 右侧为 Variant 会报错**（WARNING 当 ERROR）：`.get()`/`.call()`/无返回类型函数/双签名数学函数；新函数必写返回类型。**4.x 只有 11 个函数有 `f` 变体**＝`absf/ceilf/clampf/floorf/lerpf/maxf/minf/roundf/signf/snappedf/wrapf`；`sin/cos/tan/atan/atan2/sqrt/pow/exp/log/deg2rad/rad2deg` **没有 sinf/asinf/sqrtf/powf**，写了整份脚本解析失败（lint 第 7 项查）。
 - 信号 arity 是**运行时**检查：改 `signal` 参数后回调不匹配**不报错**，真触发才炸。常驻 `test/signal_arity_check.py`。
 - **「每帧强制对齐状态」的函数会吃掉外来一次性动画**：`physics._update_animation()` 每帧 `else: spr.play("idle")` ⇒ 一次性动画须有独占标志位（见 `is_working`）。
+- **「同步重入」：发信号 / 调别人方法时，对方会在你返回之前改你的状态**。典型＝`body.take_damage()` 把玩家打死 ⇒ 玩家**同步**发 `died` ⇒ 我方 `_set_state(RETREAT)` 顺手把当前招置 null ⇒ 回到原函数继续读它＝空引用（2026-09-26 沙虫：玩家一死连报两条 `Invalid access … on Nil`；日志里只看得见第一条，第二条在调用方那一行）。**规矩：进函数先取局部快照，扣血 / 发信号之后只用局部量；调用方在该调用之后必须重新确认状态**（`if _attack == null: return` + `is_attack_phase(_state)` 守门）。凡"我会改别人 / 别人会改我"的调用都按这条办。
 
 ## 三、运行时取证与排查
 - 日志 `%APPDATA%\Godot\app_userdata\loss_land\logs\`（`godot.log` 当次 + 历史时间戳）；分类开关同目录 `debug_config.cfg`（**默认 resource=false**，排查采集/生成先改 true）。存档 `saves/slot_N.json` 可 Python 直读。
@@ -37,4 +38,4 @@
 - **容器**：数据层唯一入口＝`Inventory` 静态方法；四块信息面板可同刻全开（`LAYOUT_PANELS`）；修饰键点击须**延后到"松开且未拖拽"**再判定。
 - **采集**：工作量 ÷ 工具每击伤害＝要采几下，中断**进度保留**（存 `work_remaining`）；工具门槛留空＝空手可采；在役工具 4 把；作业动画＝SpriteFrames 的 **`harvest`**（不借 attack、不触发伤害）。
 - **资源实体**：8 种只有 tree 有专用预制体，其余走 `tscn/resource_entity.tscn`；**兜底判据＝「sprite 是否带 SpriteFrames」**；卸载/挂起一律**复用节点**（对象池 / `remove_child`），绝不 queue_free。
-- **Boss / 沙虫**：独立 `"boss"` 组、**绝不进 `"enemy"` 组**；永久世界状态只走 `WorldState`；状态机**没有 `dead`、终态 `GONE`**；换表**只在决策点**；技能全 CD 时**回 CHASE**；**领地/脱战判据＝玩家↔巢穴**（`player_home_distance()`，别与 `player_distance()` 混），追击/出招受**领地绳**约束、回家不受限。场地 `tscn/sandworm_test.tscn`（**F6 独立窗口**）＋回归 `test/boss_state_test.gd`（49 断言）。
+- **Boss / 沙虫**：独立 `"boss"` 组、**绝不进 `"enemy"` 组**；永久世界状态只走 `WorldState`；状态机**没有 `dead`、终态 `GONE`**；换表**只在决策点**；技能全 CD 时**回 CHASE**；**领地/脱战判据＝玩家↔巢穴**（`player_home_distance()`，别与 `player_distance()` 混），追击/出招受**领地绳**约束、回家不受限。场地 `tscn/sandworm_test.tscn`（**F6 独立窗口**）＋回归 `test/boss_state_test.gd`（57 断言，用例 13＝扣血同步重入）。
